@@ -1,39 +1,36 @@
+#include "lora_setup.h"
 #include <Arduino.h>
-#include <LoRa.h>
 #include <SPI.h>
+#include <LoRa.h>
 
-#define SCK_PIN 18
-#define MISO_PIN 19
-#define MOSI_PIN 23
-#define NSS_PIN 5
-#define RST_PIN 14
-#define DIO0_PIN 2
-
-bool lora_setup() {
-    // ESP32 cho phep chon chan SPI bang phan mem, nen ta khai bao dung wiring o day.
+bool init_lora(){
+    // Khai báo chân SPI cho ESP32.
     SPI.begin(SCK_PIN, MISO_PIN, MOSI_PIN, NSS_PIN);
-
-    // setPins phai goi truoc LoRa.begin() de thu vien biet chan CS/RESET/IRQ.
+  
+    // Liên kết chân điều khiển của LoRa với ESP32.
     LoRa.setPins(NSS_PIN, RST_PIN, DIO0_PIN);
+   
+    // Sử dụng đối tượng SPI đã khai báo để giao tiếp với LoRa.
     LoRa.setSPI(SPI);
-
-    // 8 MHz thuong on voi day ngan. Neu breadboard/day dai chap chon, giam xuong 1E6.
-    LoRa.setSPIFrequency(8E6);
     
-    // Tan so 433 MHz phu hop voi nhieu module SX1278 pho bien.
-    if (!LoRa.begin(433E6)) {
+    // Tần số SPI 8 MHz phù hợp với dây ngắn và tốc độ truyền ổn định.
+    LoRa.setSPIFrequency(SPI_FREQUENCY); 
+
+    // Khởi động LoRa ở tần số 433 MHz.
+    //Ở Việt Nam, chỉ nên sử dụng các tần số nhất định, xem thêm tại biến LORA_FREQUENCY.
+    if (!LoRa.begin(LORA_FREQUENCY)) {
         Serial.println("Starting LoRa failed!");
         return false;
     }
+    
+    // Cấu hình các thông số vô tuyến cho mạng lưới multi-hop.
+    LoRa.setSpreadingFactor(SPREADING_FACTOR);
+    LoRa.setSignalBandwidth(SIGNAL_BANDWIDTH);
+    LoRa.setCodingRate4(CODING_RATE_PER_4_BITS);
+    LoRa.setSyncWord(SYNC_WORD);
+    LoRa.setPreambleLength(PREAMBLE_LENGTH);
 
-    // Moi node trong mang multi-hop phai dung cung cac thong so radio nay.
-    LoRa.setSpreadingFactor(7);
-    LoRa.setSignalBandwidth(125E3);
-    LoRa.setCodingRate4(5);
-    LoRa.setSyncWord(0x12);
-    LoRa.setPreambleLength(8);
-
-    // CRC phan cung cua LoRa; packet van co CRC16 rieng o tang protocol.
+    // Kích hoạt CRC phần cứng của LoRa để đảm bảo tính toàn vẹn dữ liệu.
     LoRa.enableCrc();
 
     // Setup xong thi dua module ve che do lang nghe packet.

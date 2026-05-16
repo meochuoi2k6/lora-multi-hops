@@ -18,7 +18,7 @@ void setup() {
   Serial.println(" ===");
   Serial.println("Type a message and press Enter to broadcast:");
 
-  if (!lora_setup()) {
+  if (!init_lora()) {
     while (true) {
       delay(1000);
     }
