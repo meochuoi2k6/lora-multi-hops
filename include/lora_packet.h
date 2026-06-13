@@ -90,7 +90,10 @@ constexpr unsigned long LORA_ACK_TIMEOUT_MS = 1200;
  */
 enum LoRaPacketType : uint8_t {
     LORA_PACKET_DATA = 1, ///< Gói tin mang dữ liệu thực tế (Payload).
-    LORA_PACKET_ACK = 2   ///< Gói tin xác nhận (Acknowledge) báo đã nhận thành công.
+    LORA_PACKET_ACK = 2,  ///< Gói tin xác nhận (Acknowledge) báo đã nhận thành công.
+    LORA_PACKET_START = 3,///< Gói tin báo hiệu bắt đầu phiên truyền.
+    LORA_PACKET_END = 4,  ///< Gói tin báo hiệu kết thúc phiên truyền.
+    LORA_PACKET_PING = 5  ///< Gói tin Heartbeat/Ping báo trạng thái Online.
 };
 
 /**
@@ -169,16 +172,36 @@ struct LoRaPacket {
 
 static_assert(sizeof(LoRaPacket) <= 255, "LoRaPacket must fit inside SX127x FIFO");
 
+#define MAX_TX_QUEUE 5
+
 /**
- * @brief Đóng gói và gửi một chuỗi văn bản tới node đích.
- * * Hàm này sẽ tính toán kích thước, nén dữ liệu bằng thuật toán tĩnh Huffman (nếu tối ưu), 
- * cắt nhỏ thành nhiều mảnh (fragment) dựa theo `LORA_PAYLOAD_MAX`, và tuần tự phát đi.
- * * @param dst Địa chỉ ID của node đích.
- * @param text Chuỗi ký tự (C-string) cần gửi.
- * @return - `TRUE` Nếu toàn bộ các mảnh đã được phát đi thành công (nhận đủ ACK nếu có yêu cầu).
- * @return - `FALSE` Nếu dữ liệu rỗng, quá dài, hoặc mất kết nối giữa chừng (Packet Loss).
+ * @brief Cấu trúc lưu trữ tin nhắn chờ gửi (TX Queue)
  */
-bool lora_send_text(uint8_t dst, const char *text);
+struct TxMessage {
+    bool active;
+    uint8_t dst;
+    char text[LORA_MESSAGE_MAX];
+};
+
+/**
+ * @brief Đưa một chuỗi văn bản vào hàng đợi TX (TX Queue).
+ * * Hàm này không gửi ngay, mà sẽ giao cho lora_process() xử lý khi rảnh (CSMA/LBT).
+ * @param dst Địa chỉ ID của node đích.
+ * @param text Chuỗi ký tự (C-string) cần gửi.
+ */
+void lora_queue_text(uint8_t dst, const char *text);
+
+/**
+ * @brief Đóng gói và gửi một chuỗi văn bản tới node đích (Nội bộ).
+ * * Được gọi tự động bởi lora_process() khi xả hàng đợi.
+ */
+bool lora_send_text_internal(uint8_t dst, const char *text);
+
+/**
+ * @brief Khởi tạo các tham số ngẫu nhiên cho session (chống lỗi trùng lặp khi reset).
+ */
+void lora_packet_setup();
+
 
 /**
  * @brief Đọc và xử lý các gói tin LoRa đến.

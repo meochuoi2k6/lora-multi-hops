@@ -5,6 +5,7 @@
 #include <SPI.h>
 #include <LoRa.h>
 #include <static_huffman.h>
+#include "bluetooth_input.h"
 
 #include <string.h> // Để dùng memcpy, memset
 
@@ -14,7 +15,10 @@
 namespace {
 
 /// Biến đếm số thứ tự gói tin (Sequence Number) để chống trùng lặp.
+/// Sẽ được gán giá trị random lúc khởi động để tránh trùng lặp sau khi reset mạch.
 uint16_t nextSeq = 1;
+
+void process_incoming_packet(LoRaPacket packet);
 
 /// Biến đếm ID thông điệp (Message ID) tiếp theo để gom các mảnh phân mảnh.
 uint16_t nextMsgId = 1;
@@ -30,8 +34,49 @@ struct SeenPacket {
   uint16_t seq; ///< Số thứ tự của gói tin đó
 };
 
-/// Bộ đệm vòng (Circular Buffer) lưu lại 12 gói tin gần nhất đã nghe thấy.
-SeenPacket seenPackets[12] = {};
+/// Bộ đệm vòng (Circular Buffer) lưu lại 64 gói tin gần nhất đã nghe thấy.
+SeenPacket seenPackets[64] = {};
+
+/**
+ * @brief Kích thước tối đa của Hàng đợi thu (RX Queue).
+ * @note Giúp lưu trữ tạm thời các gói tin bay đến trong lúc mạch đang bận (ví dụ: đang chờ ACK 
+ * hoặc đang thực hiện delay nhường sóng). 15 gói là đủ để hứng các vụ nổ sóng (burst).
+ */
+#define MAX_RX_QUEUE 15
+
+LoRaPacket rxPacketQueue[MAX_RX_QUEUE]; ///< Mảng chứa các gói tin trong hàng đợi
+uint8_t rxQueueHead = 0;                ///< Vị trí lấy gói tin ra (Pop)
+uint8_t rxQueueTail = 0;                ///< Vị trí đẩy gói tin vào (Push)
+uint8_t rxQueueCount = 0;               ///< Số lượng gói tin hiện có trong hàng đợi
+
+/**
+ * @brief Đưa một gói tin vừa nhận được vào Hàng đợi thu (RX Queue).
+ * @param packet Gói tin LoRa thô vừa đọc từ module SX1278.
+ * @return `true` nếu đẩy vào thành công, `false` nếu hàng đợi đã đầy (bị rơi gói).
+ */
+bool enqueue_rx_packet(const LoRaPacket &packet) {
+    if (rxQueueCount >= MAX_RX_QUEUE) {
+        Serial.println("RX Queue FULL! Packet dropped.");
+        return false;
+    }
+    rxPacketQueue[rxQueueTail] = packet;
+    rxQueueTail = (rxQueueTail + 1) % MAX_RX_QUEUE;
+    rxQueueCount++;
+    return true;
+}
+
+/**
+ * @brief Lấy một gói tin ra khỏi Hàng đợi thu (RX Queue) để xử lý.
+ * @param packet Biến chứa kết quả trả về.
+ * @return `true` nếu lấy thành công, `false` nếu hàng đợi đang rỗng.
+ */
+bool dequeue_rx_packet(LoRaPacket &packet) {
+    if (rxQueueCount == 0) return false;
+    packet = rxPacketQueue[rxQueueHead];
+    rxQueueHead = (rxQueueHead + 1) % MAX_RX_QUEUE;
+    rxQueueCount--;
+    return true;
+}
 
 /**
  * @brief Bộ đệm dùng để ghép mảnh (Reassembly) các gói tin đến.
@@ -44,6 +89,7 @@ SeenPacket seenPackets[12] = {};
  * @brief - `fragCount`: Tổng số mảnh phải nhận
  * @brief - `received`: Mảng đánh dấu (true/false) xem mảnh nào đã nhận được
  * @brief - `data`: Bộ đệm chứa dữ liệu thô của các mảnh ghép lại
+ * @brief - `lastUpdate`: Thời gian nhận mảnh cuối cùng (dùng để timeout dump queue)
  * @note Vì LoRa chỉ gửi tối đa 64 byte mỗi lần, một thông điệp dài 
  * sẽ bị cắt làm nhiều gói (fragment). Bộ đệm này giữ các mảnh lại cho 
  * đến khi nhận đủ thì mới giải mã toàn bộ.
@@ -51,6 +97,7 @@ SeenPacket seenPackets[12] = {};
 struct RxMessageBuffer {
   bool active;                           ///< Có đang trong quá trình nhận dở dang một tin nhắn không?
   uint8_t src;                           ///< ID của người đang gửi tin nhắn này
+  uint8_t dst;                           ///< ID đích
   uint16_t msgId;                        ///< ID của tin nhắn đang nhận dở
   uint8_t codec;                         ///< Thuật toán nén của tin nhắn này
   uint16_t rawLen;                       ///< Chiều dài dữ liệu gốc
@@ -58,10 +105,53 @@ struct RxMessageBuffer {
   uint8_t fragCount;                     ///< Tổng số mảnh phải nhận
   bool received[LORA_MAX_FRAGMENTS];     ///< Mảng đánh dấu (true/false) xem mảnh nào đã nhận được
   uint8_t data[LORA_ENCODED_MAX];        ///< Bộ đệm chứa dữ liệu thô của các mảnh ghép lại
+  unsigned long lastUpdate;              ///< Thời gian nhận mảnh cuối cùng (dùng để timeout dump queue)
+  bool completed;                        ///< Đánh dấu đã in ra màn hình chưa
 };
 
-/// Khởi tạo một bộ đệm trống
-RxMessageBuffer rxBuffer = {};
+/// Hỗ trợ nhận đồng thời từ 4 người gửi khác nhau
+constexpr uint8_t MAX_RX_BUFFERS = 4;
+RxMessageBuffer rxBuffers[MAX_RX_BUFFERS] = {};
+
+/**
+ * @brief Tìm bộ đệm đang ghép dở thông điệp của một node
+ */
+RxMessageBuffer* get_rx_buffer(uint8_t src, uint16_t msgId) {
+  for (uint8_t i = 0; i < MAX_RX_BUFFERS; ++i) {
+    if (rxBuffers[i].active && rxBuffers[i].src == src && rxBuffers[i].msgId == msgId) {
+      return &rxBuffers[i];
+    }
+  }
+  return nullptr;
+}
+
+/**
+ * @brief Cấp phát bộ đệm mới. Nếu đầy sẽ hất văng (evict) bộ đệm cũ nhất.
+ */
+RxMessageBuffer* allocate_rx_buffer() {
+  for (uint8_t i = 0; i < MAX_RX_BUFFERS; ++i) {
+    if (!rxBuffers[i].active) {
+      return &rxBuffers[i];
+    }
+  }
+  
+  uint8_t oldestIdx = 0;
+  unsigned long oldestTime = rxBuffers[0].lastUpdate;
+  for (uint8_t i = 1; i < MAX_RX_BUFFERS; ++i) {
+    if (rxBuffers[i].lastUpdate < oldestTime) {
+      oldestTime = rxBuffers[i].lastUpdate;
+      oldestIdx = i;
+    }
+  }
+  
+  Serial.print("RX Buffers full! Evicting old buffer of src=");
+  Serial.print(rxBuffers[oldestIdx].src);
+  Serial.print(" msgId=");
+  Serial.println(rxBuffers[oldestIdx].msgId);
+  
+  rxBuffers[oldestIdx].active = false;
+  return &rxBuffers[oldestIdx];
+}
 
 /**
  * @brief Kiểm tra xem gói tin này đã từng được nhận và xử lý hay chưa.
@@ -259,6 +349,8 @@ bool wait_for_ack(uint8_t expectedFrom, uint16_t seq, unsigned long &rttMs) {
            packet.seq == seq) {
             rttMs = millis() - startedAt;
             return true; // Nhận được ACK hợp lệ
+        } else {
+            enqueue_rx_packet(packet); // Không bỏ đi mà cất vào RX Queue
         }
     }
     rttMs = millis() - startedAt;
@@ -279,14 +371,14 @@ void send_ack(const LoRaPacket &receivedPacket) {
       .version = LORA_PROTOCOL_VERSION,
       .type = LORA_PACKET_ACK,
       .src = NODE_ID,
-      .dst = receivedPacket.prevHop,
+      .dst = receivedPacket.src, // Gửi ACK về tận người tạo ra gói tin
       .prevHop = NODE_ID,
-      .nextHop = receivedPacket.prevHop,
+      .nextHop = BROADCAST_ID, // Flooding ACK trên đường về
       .seq = receivedPacket.seq,
       .msgId = receivedPacket.msgId,
       .fragIndex = receivedPacket.fragIndex,
       .fragCount = receivedPacket.fragCount,
-      .ttl = 1,
+      .ttl = 5, // Cho phép ACK nhảy tối đa 5 bước (Multi-hop ACK)
       .flags = 0,
       .codec = LORA_CODEC_NONE,
       .rawLen = 0,
@@ -307,16 +399,16 @@ void send_ack(const LoRaPacket &receivedPacket) {
  * Nếu gói tin không yêu cầu ACK, nó sẽ chỉ gửi một lần duy nhất.
  */
 bool send_with_retry(LoRaPacket &packet) {
-  if (packet.dst == BROADCAST_ID || packet.nextHop == BROADCAST_ID) {
-     packet.flags &= ~LORA_FLAG_ACK_REQ; // Tắt cờ ACK
+  if (packet.dst == BROADCAST_ID) {
+     packet.flags &= ~LORA_FLAG_ACK_REQ; // Chỉ tắt ACK nếu đích thực sự là Broadcast (Group Chat)
   }
 
   for (uint8_t attempt = 0; attempt < LORA_MAX_RETRY; ++attempt) {
-    // Tăng random delay (Jitter) để tránh đụng độ sóng khi các node cùng relay
+    // Tăng random delay (Jitter) kết hợp với CSMA cơ bản để tránh đụng độ sóng
     if (packet.flags & LORA_FLAG_RELAYED) {
-       delay(random(100, 600)); 
+       delay(random(150, 1000)); // Khoảng random rộng hơn cho relay để tránh bão broadcast
     } else {
-       delay(random(40, 160));
+       delay(random(50, 200));
     }
 
     if (!send_raw_packet(packet)) {
@@ -324,17 +416,20 @@ bool send_with_retry(LoRaPacket &packet) {
     }
 
     if ((packet.flags & LORA_FLAG_ACK_REQ) == 0) {
-      return true; // Không yêu cầu ACK thì gửi 1 lần (hoặc có thể lặp 3 lần không cần chờ)
+      return true; // Không yêu cầu ACK thì gửi 1 lần là xong
     }
 
     unsigned long rttMs = 0;
-    if (wait_for_ack(packet.nextHop, packet.seq, rttMs)) {
+    // Đợi ACK trực tiếp từ đích đến (End-to-End ACK) thay vì từ nextHop
+    if (wait_for_ack(packet.dst, packet.seq, rttMs)) {
       Serial.print("ACK seq=");
       Serial.print(packet.seq);
       Serial.print(" from=");
-      Serial.print(packet.nextHop);
+      Serial.print(packet.dst);
       Serial.print(" rtt_ms=");
       Serial.println(rttMs);
+
+      bluetooth_input_print_metric_ack(rttMs);
       return true;
     }
 
@@ -353,15 +448,18 @@ bool send_with_retry(LoRaPacket &packet) {
  * @note Hàm này sẽ xóa sạch dữ liệu cũ trong `rxBuffer`, đánh dấu nó là đang hoạt động, và điền các trường như `src`, `msgId`, `codec`, `rawLen`, `encodedBitLen`, và `fragCount` dựa trên gói tin đầu tiên của thông điệp mới. 
  * Điều này giúp chuẩn bị sẵn sàng cho việc ghép mảnh (Reassembly) các gói tin tiếp theo của cùng một thông điệp.
  */
-void reset_rx_buffer(const LoRaPacket &packet) {
-  memset(&rxBuffer, 0, sizeof(rxBuffer));
-  rxBuffer.active = true;
-  rxBuffer.src = packet.src;
-  rxBuffer.msgId = packet.msgId;
-  rxBuffer.codec = packet.codec;
-  rxBuffer.rawLen = packet.rawLen;
-  rxBuffer.encodedBitLen = packet.encodedBitLen;
-  rxBuffer.fragCount = packet.fragCount;
+void reset_rx_buffer(RxMessageBuffer* buf, const LoRaPacket &packet) {
+  memset(buf, 0, sizeof(RxMessageBuffer));
+  buf->active = true;
+  buf->src = packet.src;
+  buf->dst = packet.dst;
+  buf->msgId = packet.msgId;
+  buf->codec = packet.codec;
+  buf->rawLen = packet.rawLen;
+  buf->encodedBitLen = packet.encodedBitLen;
+  buf->fragCount = packet.fragCount;
+  buf->lastUpdate = millis();
+  buf->completed = false;
 }
 
 /**
@@ -369,10 +467,12 @@ void reset_rx_buffer(const LoRaPacket &packet) {
  * @note Các thông số bao gồm RSSI (Received Signal Strength Indicator) và SNR (Signal-to-Noise Ratio).
  */
 void print_link_metric() {
+  int rssi = LoRa.packetRssi();
+  float snr = LoRa.packetSnr();
   Serial.print("RSSI=");
-  Serial.print(LoRa.packetRssi());
+  Serial.print(rssi);
   Serial.print(" SNR=");
-  Serial.println(LoRa.packetSnr());
+  Serial.println(snr);
 }
 
 /**
@@ -383,19 +483,20 @@ void print_link_metric() {
  * @param rawLen Chiều dài thực tế của dữ liệu gốc trước khi nén.
  * @param encodedBitLen Chiều dài thực tế tính bằng bit (nếu dùng nén Huffman).
  */
-void print_complete_message(const uint8_t *encodedData,
-                            uint16_t encodedBytes,
-                            uint8_t codec,
-                            uint16_t rawLen,
-                            uint16_t encodedBitLen) {
+void print_complete_message(const RxMessageBuffer* buf) {
   uint8_t decoded[LORA_MESSAGE_MAX + 1] = {};
   bool ok = false;
 
-  if (codec == LORA_CODEC_STATIC_HUFFMAN) {
-    ok = huffman_decompress(encodedData, encodedBitLen, decoded, rawLen);
+  uint16_t encodedBytes = buf->encodedBitLen > 0 ? (buf->encodedBitLen + 7) / 8 : 0;
+  if (buf->codec == LORA_CODEC_NONE) {
+    encodedBytes = buf->rawLen;
+  }
+
+  if (buf->codec == LORA_CODEC_STATIC_HUFFMAN) {
+    ok = huffman_decompress(buf->data, buf->encodedBitLen, decoded, buf->rawLen);
   } else {
-    if (rawLen <= encodedBytes && rawLen <= LORA_MESSAGE_MAX) {
-      memcpy(decoded, encodedData, rawLen);
+    if (buf->rawLen <= encodedBytes && buf->rawLen <= LORA_MESSAGE_MAX) {
+      memcpy(decoded, buf->data, buf->rawLen);
       ok = true;
     } else {
       Serial.println("Decode error: rawLen invalid for LORA_CODEC_NONE");
@@ -407,14 +508,24 @@ void print_complete_message(const uint8_t *encodedData,
     return;
   }
 
-  decoded[rawLen] = '\0';
+  decoded[buf->rawLen] = '\0';
 
   Serial.print("MESSAGE from node ");
-  Serial.print(rxBuffer.src);
+  Serial.print(buf->src);
   Serial.print(" msgId=");
-  Serial.print(rxBuffer.msgId);
+  Serial.print(buf->msgId);
   Serial.print(" text=");
   Serial.println(reinterpret_cast<char *>(decoded));
+
+  // Đo lường Packet Loss ở máy thu (RX side) dành cho Broadcast Mode và Dev Mode
+  Serial.print("RX_METRIC: fragments_received=");
+  Serial.print(buf->fragCount);
+  Serial.print("/");
+  Serial.print(buf->fragCount);
+  Serial.println(" (0% packet loss)");
+  bluetooth_input_print_received(buf->src, buf->dst, buf->msgId, reinterpret_cast<char *>(decoded));
+  bluetooth_input_print_metric_rx_loss(buf->fragCount, buf->fragCount);
+  bluetooth_input_print_metric_rx(LoRa.packetRssi(), LoRa.packetSnr());
 }
 
 /**
@@ -424,9 +535,13 @@ void print_complete_message(const uint8_t *encodedData,
  * các mảnh của một thông điệp, nó sẽ gọi hàm in ra kết quả cuối cùng.
  */
 void handle_final_fragment(const LoRaPacket &packet) {
-  if (!rxBuffer.active || rxBuffer.src != packet.src || rxBuffer.msgId != packet.msgId) {
-    reset_rx_buffer(packet);
+  RxMessageBuffer* buf = get_rx_buffer(packet.src, packet.msgId);
+  if (!buf) {
+    buf = allocate_rx_buffer();
+    reset_rx_buffer(buf, packet);
   }
+
+  buf->lastUpdate = millis();
 
   uint16_t offset = static_cast<uint16_t>(packet.fragIndex) * LORA_PAYLOAD_MAX;
   if (offset + packet.payloadLen > LORA_ENCODED_MAX) {
@@ -434,8 +549,8 @@ void handle_final_fragment(const LoRaPacket &packet) {
     return;
   }
 
-  memcpy(rxBuffer.data + offset, packet.payload, packet.payloadLen);
-  rxBuffer.received[packet.fragIndex] = true;
+  memcpy(buf->data + offset, packet.payload, packet.payloadLen);
+  buf->received[packet.fragIndex] = true;
 
   Serial.print("RX frag ");
   Serial.print(packet.fragIndex + 1);
@@ -444,21 +559,17 @@ void handle_final_fragment(const LoRaPacket &packet) {
   Serial.print(" msgId=");
   Serial.println(packet.msgId);
 
-  if (!all_fragments_received(rxBuffer)) {
+  if (!all_fragments_received(*buf)) {
     return;
   }
 
-  uint16_t encodedBytes = rxBuffer.encodedBitLen > 0 ? (rxBuffer.encodedBitLen + 7) / 8 : 0;
-  if (rxBuffer.codec == LORA_CODEC_NONE) {
-    encodedBytes = rxBuffer.rawLen;
+  // Chỉ in ra 1 lần khi vừa nhận đủ mảnh cuối cùng
+  // Không set buf->active = false ở đây để giữ cho is_channel_busy() hoạt động chính xác
+  // cho đến khi gói END thực sự được nhận.
+  if (!buf->completed) {
+      print_complete_message(buf);
+      buf->completed = true;
   }
-
-  print_complete_message(rxBuffer.data,
-                         encodedBytes,
-                         rxBuffer.codec,
-                         rxBuffer.rawLen,
-                         rxBuffer.encodedBitLen);
-  rxBuffer.active = false;
 }
 
 /**
@@ -468,6 +579,10 @@ void handle_final_fragment(const LoRaPacket &packet) {
  * thêm cờ `LORA_FLAG_RELAYED` và gửi gói tin đi tiếp với cơ chế ARQ.
  */
 void relay_packet(LoRaPacket &packet) {
+  if (packet.ttl <= 1) {
+    return; // Dừng relay nếu gói tin đã hết hạn TTL
+  }
+  packet.ttl--; // Giảm TTL sau mỗi chặng
   packet.prevHop = NODE_ID;
   packet.nextHop = BROADCAST_ID; // Flooding
   packet.flags |= LORA_FLAG_RELAYED; // Đánh dấu đã được relay
@@ -498,7 +613,94 @@ void print_compression_metric(uint8_t codec,
   Serial.print(" entropy=");
   Serial.print(entropy, 3);
   Serial.print(" compression_ratio=");
-  Serial.println(static_cast<float>(encodedBytes) / static_cast<float>(rawLen), 3);
+  float ratio = static_cast<float>(encodedBytes) / static_cast<float>(rawLen);
+  Serial.println(ratio, 3);
+
+  bluetooth_input_print_metric_tx(entropy, ratio);
+}
+
+
+/**
+ * @brief Xử lý logic cho một gói tin vừa lấy ra từ phần cứng hoặc RX Queue.
+ * @param packet Gói tin cần xử lý.
+ * @note Hàm này đảm nhiệm các chức năng cốt lõi: lọc gói rác, gửi ACK, kiểm tra trùng lặp (Deduplication),
+ * ghép mảnh thông điệp (Reassembly) và chuyển tiếp gói (Relay) cho mạng Mesh.
+ */
+void process_incoming_packet(LoRaPacket packet) {
+  // Bỏ qua các gói do chính node này gửi ra nhưng lại vọng lại
+  if (packet.src == NODE_ID) {
+    return;
+  }
+
+  if (packet.type == LORA_PACKET_ACK) {
+    return;
+  }
+
+  print_link_metric();
+  
+  // Chỉ gửi ACK nếu gói tin yêu cầu
+  if (packet.flags & LORA_FLAG_ACK_REQ) {
+    send_ack(packet);
+  }
+
+  bool duplicate = was_seen(packet.src, packet.seq);
+  if (!duplicate) {
+    mark_seen(packet.src, packet.seq);
+  } else {
+    // Đã thấy gói này rồi, bỏ qua không xử lý hay relay tiếp
+    return;
+  }
+
+  // Xử lý dữ liệu đến tay (đích là mình hoặc là gói Broadcast)
+  if (packet.dst == NODE_ID || packet.dst == BROADCAST_ID) {
+    if (packet.type == LORA_PACKET_PING) {
+      Serial.print("RX: LORA_PACKET_PING from ");
+      Serial.println(packet.src);
+      bluetooth_input_print_ping(packet.src);
+    } else if (packet.type == LORA_PACKET_START) {
+      Serial.println("RX: LORA_PACKET_START");
+      RxMessageBuffer* buf = get_rx_buffer(packet.src, packet.msgId);
+      if (!buf) {
+        buf = allocate_rx_buffer();
+      }
+      reset_rx_buffer(buf, packet);
+    } else if (packet.type == LORA_PACKET_END) {
+      Serial.println("RX: LORA_PACKET_END");
+      RxMessageBuffer* buf = get_rx_buffer(packet.src, packet.msgId);
+      if (buf) {
+        if (!all_fragments_received(*buf)) {
+          Serial.print("Packet Loss at RX: Missing fragments for msgId=");
+          Serial.println(packet.msgId);
+          uint8_t missing = 0;
+          for(int i = 0; i < buf->fragCount; i++){
+              if(!buf->received[i]) {
+                  missing++;
+                  Serial.print(" - Missed frag: ");
+                  Serial.println(i + 1);
+              }
+          }
+          Serial.print("Total missed: "); 
+          Serial.print(missing);
+          Serial.print("/");
+          Serial.println(buf->fragCount);
+          
+          uint8_t receivedCount = buf->fragCount - missing;
+          bluetooth_input_print_received(buf->src, buf->dst, buf->msgId, "<Lỗi: Mất gói tin do nhiễu sóng>");
+          bluetooth_input_print_metric_rx_loss(receivedCount, buf->fragCount);
+          bluetooth_input_print_metric_rx(LoRa.packetRssi(), LoRa.packetSnr());
+
+          buf->active = false; // Dump queue
+        }
+      }
+    } else if (packet.type == LORA_PACKET_DATA) {
+      handle_final_fragment(packet);
+    }
+  }
+
+  // Nếu gói tin không gửi đích danh cho chính mình, ta sẽ đóng vai trò trạm trung chuyển (Unicast Flooding)
+  if (packet.dst != NODE_ID) {
+    relay_packet(packet);
+  }
 }
 
 } //namespace
@@ -506,6 +708,19 @@ void print_compression_metric(uint8_t codec,
 // ====================================================================
 //                          CÁC HÀM PUBLIC 
 // ====================================================================
+
+/**
+ * @brief Khởi tạo các tham số ngẫu nhiên cho session (chống lỗi trùng lặp khi reset).
+ */
+void lora_packet_setup() {
+    // Khởi tạo Seq và MsgId ngẫu nhiên để khi mạch bị reset (mất điện), 
+    // các gói tin mới sinh ra sẽ không bị trùng số thứ tự với các gói tin cũ 
+    // còn sót lại trong bộ nhớ cache của các node khác trong mạng.
+    nextSeq = random(1000, 60000);
+    nextMsgId = random(1000, 60000);
+    Serial.printf("Session init: nextSeq=%d, nextMsgId=%d\n", nextSeq, nextMsgId);
+}
+
 
 /**
  * @brief Đóng gói và gửi một chuỗi văn bản tới node đích.
@@ -516,7 +731,40 @@ void print_compression_metric(uint8_t codec,
  * @note Hàm sẽ tính toán kích thước, nén dữ liệu (nếu tối ưu), 
  * @note cắt nhỏ thành các mảnh (fragment) và phát đi tuần tự.
  */
-bool lora_send_text(uint8_t dst, const char *text) {
+TxMessage txQueue[MAX_TX_QUEUE];
+unsigned long lastTxTime = 0;
+
+void lora_queue_text(uint8_t dst, const char *text) {
+  for (int i = 0; i < MAX_TX_QUEUE; ++i) {
+    if (!txQueue[i].active) {
+      txQueue[i].dst = dst;
+      strncpy(txQueue[i].text, text, LORA_MESSAGE_MAX - 1);
+      txQueue[i].text[LORA_MESSAGE_MAX - 1] = '\0';
+      txQueue[i].active = true;
+      Serial.print("Đã đưa tin nhắn vào TX Queue tại vị trí: ");
+      Serial.println(i);
+      return;
+    }
+  }
+  Serial.println("Lỗi: TX Queue đã đầy!");
+}
+
+bool is_channel_busy() {
+  // Điều kiện 1: Đang có RX Buffer hoạt động trong 3 giây gần đây
+  for (uint8_t i = 0; i < MAX_RX_BUFFERS; ++i) {
+    if (rxBuffers[i].active && (millis() - rxBuffers[i].lastUpdate < 3000)) {
+      return true;
+    }
+  }
+  // Điều kiện 2: Đo năng lượng sóng vật lý (LBT)
+  int currentRssi = LoRa.rssi();
+  if (currentRssi > -85) {
+    return true; // Kênh đang bị chiếm dụng
+  }
+  return false;
+}
+
+bool lora_send_text_internal(uint8_t dst, const char *text) {
   if (text == nullptr) {
     return false;
   }
@@ -559,6 +807,29 @@ bool lora_send_text(uint8_t dst, const char *text) {
   txFragments = 0;
   txFailedFragments = 0;
 
+  // Phát gói START
+  LoRaPacket startPacket = {};
+  startPacket.version = LORA_PROTOCOL_VERSION;
+  startPacket.type = LORA_PACKET_START;
+  startPacket.src = NODE_ID;
+  startPacket.dst = dst;
+  startPacket.prevHop = NODE_ID;
+  startPacket.nextHop = get_next_hop(dst);
+  startPacket.seq = nextSeq++;
+  startPacket.msgId = msgId;
+  startPacket.fragIndex = 0;
+  startPacket.fragCount = fragCount;
+  startPacket.ttl = LORA_TTL_DEFAULT;
+  startPacket.flags = LORA_FLAG_ACK_REQ;
+  startPacket.codec = codec;
+  startPacket.rawLen = rawLen;
+  startPacket.encodedBitLen = encodedBits;
+  startPacket.payloadLen = 0;
+  if (!send_with_retry(startPacket) && startPacket.dst != BROADCAST_ID) {
+     Serial.println("TX Failed: START packet no ACK. Dumping TX queue!");
+     return false;
+  }
+
   for (uint8_t fragIndex = 0; fragIndex < fragCount; ++fragIndex) {
     uint16_t offset = static_cast<uint16_t>(fragIndex) * LORA_PAYLOAD_MAX;
     uint8_t chunkLen = min(static_cast<uint16_t>(LORA_PAYLOAD_MAX), static_cast<uint16_t>(encodedBytes - offset));
@@ -582,9 +853,8 @@ bool lora_send_text(uint8_t dst, const char *text) {
     packet.payloadLen = chunkLen;
     memcpy(packet.payload, encoded + offset, chunkLen);
 
-    if (fragIndex > 0 && dst == BROADCAST_ID) {
-      // Cho các node trung gian (relay) thời gian rảnh để phát lại (forward) gói tin trước đó.
-      // Nếu không có delay, node trung gian sẽ bận TX và điếc (không nhận được) gói tiếp theo.
+    if (dst == BROADCAST_ID) {
+      // Cho các node trung gian (relay) thời gian rảnh để phát lại (forward) gói tin trước đó (START hoặc DATA cũ).
       delay(1500);
     }
 
@@ -592,8 +862,25 @@ bool lora_send_text(uint8_t dst, const char *text) {
     if (!send_with_retry(packet)) {
       txFailedFragments++;
       allOk = false;
+      if (dst != BROADCAST_ID) {
+          Serial.println("TX Failed: No ACK. Dumping remaining TX queue!");
+          break; // Dump queue khi gửi mà ko có phản hồi
+      }
     }
   }
+
+  // Phát gói END
+  if (allOk) {
+    if (dst == BROADCAST_ID) {
+      // Tương tự, đợi các node relay xong gói DATA cuối cùng rồi mới bồi gói END
+      delay(1500);
+    }
+    LoRaPacket endPacket = startPacket;
+    endPacket.type = LORA_PACKET_END;
+    endPacket.seq = nextSeq++;
+    send_with_retry(endPacket);
+  }
+
 
   Serial.print("tx_fragments=");
   Serial.print(txFragments);
@@ -605,52 +892,112 @@ bool lora_send_text(uint8_t dst, const char *text) {
   return allOk;
 }
 
+
+
+
 /**
  * @brief Đọc và xử lý các gói tin LoRa đến.
  * @note Hàm này thực hiện việc lọc gói lỗi, trả lời ACK, trung chuyển (Relay) và
  * ghép mảnh thông điệp. Cần được gọi liên tục bên trong hàm loop().
  */
 void lora_process() {
+  static unsigned long lastPingTime = millis();
+  static unsigned long txBackoffTime = 0;
+  static bool isBackingOff = false;
+
+  // Phát Ping ngầm mỗi 3 phút
+  if (millis() - lastPingTime > 180000) {
+    lastPingTime = millis();
+    LoRaPacket ping = {};
+    ping.version = LORA_PROTOCOL_VERSION;
+    ping.type = LORA_PACKET_PING;
+    ping.src = NODE_ID;
+    ping.dst = BROADCAST_ID;
+    ping.prevHop = NODE_ID;
+    ping.nextHop = BROADCAST_ID;
+    ping.seq = nextSeq++;
+    ping.msgId = nextMsgId++;
+    ping.fragIndex = 0;
+    ping.fragCount = 1;
+    ping.ttl = 3;
+    ping.flags = 0;
+    ping.codec = LORA_CODEC_NONE;
+    ping.rawLen = 0;
+    ping.encodedBitLen = 0;
+    ping.payloadLen = 0;
+    send_with_retry(ping);
+  }
+
+  // Xả hàng đợi TX (Flush TX Queue) với Rate Limiting 5s và CSMA/CA LBT
+  bool has_tx = false;
+  for (int i = 0; i < MAX_TX_QUEUE; ++i) {
+    if (txQueue[i].active) {
+      has_tx = true;
+      break;
+    }
+  }
+
+  if (has_tx && (millis() - lastTxTime >= 5000)) {
+    if (is_channel_busy()) {
+      // Channel bận -> Đặt lịch Backoff tương lai (Random 1-3s)
+      txBackoffTime = millis() + random(1000, 3000);
+      isBackingOff = true;
+    } else {
+      if (isBackingOff) {
+        // Đang chờ đếm ngược Backoff
+        if (millis() >= txBackoffTime) {
+          isBackingOff = false;
+          // Xả hàng đợi!
+          for (int i = 0; i < MAX_TX_QUEUE; ++i) {
+            if (txQueue[i].active) {
+              Serial.println("Channel is FREE. Xả hàng đợi sau khi Backoff...");
+              txQueue[i].active = false;
+              lora_send_text_internal(txQueue[i].dst, txQueue[i].text);
+              lastTxTime = millis();
+              break;
+            }
+          }
+        }
+      } else {
+        // Không bận và không backoff -> Gửi luôn với Jitter siêu nhỏ
+        delay(random(10, 50));
+        if (!is_channel_busy()) {
+          for (int i = 0; i < MAX_TX_QUEUE; ++i) {
+            if (txQueue[i].active) {
+              Serial.println("Channel is FREE. Xả hàng đợi TX Queue lập tức...");
+              txQueue[i].active = false;
+              lora_send_text_internal(txQueue[i].dst, txQueue[i].text);
+              lastTxTime = millis();
+              break;
+            }
+          }
+        } else {
+          // Bị chen ngang trong lúc Jitter
+          txBackoffTime = millis() + random(1000, 3000);
+          isBackingOff = true;
+        }
+      }
+    }
+  }
+
+  // Kiểm tra Timeout (Dump Queue) liên tục trên toàn bộ các bộ đệm RX
+  for (uint8_t i = 0; i < MAX_RX_BUFFERS; ++i) {
+    if (rxBuffers[i].active && (millis() - rxBuffers[i].lastUpdate > 10000)) {
+       Serial.print("Packet Loss: Timeout 10s. Dump queue for src=");
+       Serial.println(rxBuffers[i].src);
+       rxBuffers[i].active = false;
+    }
+  }
+
+  // 1. Xả hàng đợi RX (các gói đến trong lúc đang busy)
+  LoRaPacket queuedPacket;
+  while (dequeue_rx_packet(queuedPacket)) {
+    process_incoming_packet(queuedPacket);
+  }
+
+  // 2. Đọc gói tin mới từ phần cứng LoRa
   LoRaPacket packet;
-  if (!read_packet(packet)) {
-    return;
-  }
-
-  // Bỏ qua các gói do chính node này gửi ra nhưng lại vọng lại
-  if (packet.src == NODE_ID) {
-    return;
-  }
-
-  if (packet.type == LORA_PACKET_ACK) {
-    return;
-  }
-
-  if (packet.type != LORA_PACKET_DATA) {
-    return;
-  }
-
-  print_link_metric();
-  
-  // Chỉ gửi ACK nếu gói tin yêu cầu
-  if (packet.flags & LORA_FLAG_ACK_REQ) {
-    send_ack(packet);
-  }
-
-  bool duplicate = was_seen(packet.src, packet.seq);
-  if (!duplicate) {
-    mark_seen(packet.src, packet.seq);
-  } else {
-    // Đã thấy gói này rồi, bỏ qua không xử lý hay relay tiếp
-    return;
-  }
-
-  // Xử lý dữ liệu đến tay (đích là mình hoặc là gói Broadcast)
-  if (packet.dst == NODE_ID || packet.dst == BROADCAST_ID) {
-    handle_final_fragment(packet);
-  }
-
-  // Nếu là gói Broadcast (Flooding) thì tiếp tục Relay cho các node khác (nếu TTL > 1)
-  if (packet.dst == BROADCAST_ID) {
-    relay_packet(packet);
+  if (read_packet(packet)) {
+    process_incoming_packet(packet);
   }
 }

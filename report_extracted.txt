@@ -1,0 +1,332 @@
+
+
+MỤC LỤC
+1.Giới Thiệu Đề Tài3
+1.1.Bối cảnh và nhu cầu truyền thông IoT tầm xa3
+1.2.Hạn chế của mô hình truyền LoRa một chặng4
+1.3.Động lực xây dựng hệ thống LoRa đa chặng4
+1.4.Mục tiêu của đề tài5
+1.5.Đối tượng và phạm vi thực hiện6
+1.6.Phương pháp tiếp cận6
+1.7. Các yêu cầu đặt ra cho hệ thống7
+1.8. Các chỉ số đánh giá dự kiến8
+1.9. Ý nghĩa khoa học và thực tiễn của đề tài8
+1.10. Đóng góp chính của đề tài9
+1.11. Cấu trúc báo cáo9
+2.CƠ SỞ LÝ THUYẾT10
+2.1.Tổng quan về hệ thống truyền tin10
+2.2.Công nghệ LoRa11
+2.3.LoRa và LoRaWAN12
+2.4.Mạng truyền dữ liệu đa chặng13
+2.5.Entropy trong lý thuyết thông tin13
+2.6.Mã hóa nguồn và thuật toán Huffman14
+2.7.Tỷ lệ nén15
+2.8.Kiểm tra lỗi CRC15
+2.9.ACK và cơ chế truyền lại ARQ15
+2.10.RSSI và SNR16
+2.11.Packet loss, delay và throughput16
+2.12.Bluetooth trong vai trò giao diện đầu vào16
+2.13.Kết luận chương17
+
+
+Giới Thiệu Đề Tài
+Bối cảnh và nhu cầu truyền thông IoT tầm xa
+Trong những năm gần đây, Internet of Things (IoT) ngày càng được ứng dụng rộng rãi trong nhiều lĩnh vực như nông nghiệp thông minh, giám sát môi trường, nhà thông minh, thành phố thông minh, logistics, cảnh báo thiên tai và các hệ thống cảm biến phân tán. Điểm chung của các hệ thống này là cần thu thập dữ liệu từ nhiều thiết bị đặt tại các vị trí khác nhau, sau đó truyền dữ liệu về một điểm xử lý trung tâm hoặc chia sẻ giữa các node trong mạng.
+Đối với các ứng dụng trong phạm vi nhỏ, những công nghệ truyền thông không dây như Wi-Fi, Bluetooth hoặc Zigbee có thể đáp ứng tốt nhu cầu kết nối. Tuy nhiên, khi phạm vi triển khai mở rộng ra các khu vực lớn hơn như cánh đồng, khu công nghiệp, nhà xưởng, vùng đồi núi hoặc khu vực thiếu hạ tầng mạng, các công nghệ này bắt đầu bộc lộ hạn chế. Wi-Fi có tốc độ truyền cao nhưng phạm vi phủ sóng không lớn và tiêu thụ năng lượng tương đối cao. Bluetooth phù hợp với kết nối khoảng cách gần. Zigbee hỗ trợ mạng mesh nhưng khoảng cách mỗi liên kết thường bị giới hạn. Trong khi đó, mạng di động có vùng phủ rộng nhưng phụ thuộc vào hạ tầng nhà mạng và có thể làm tăng chi phí vận hành.
+Từ nhu cầu đó, các công nghệ LPWAN (Low Power Wide Area Network) được phát triển nhằm phục vụ các hệ thống cần truyền dữ liệu tốc độ thấp, khoảng cách xa và tiêu thụ năng lượng thấp. LoRa là một trong những công nghệ tiêu biểu thuộc nhóm LPWAN. Công nghệ này phù hợp với các ứng dụng truyền dữ liệu nhỏ, không yêu cầu băng thông lớn nhưng cần khả năng hoạt động ổn định trong phạm vi rộng.
+Trong các hệ thống cảm biến thực tế, dữ liệu truyền đi thường là các bản tin có kích thước nhỏ như nhiệt độ, độ ẩm, trạng thái thiết bị, tín hiệu cảnh báo hoặc thông điệp điều khiển. Đây là kiểu dữ liệu phù hợp với LoRa. Nhờ ưu điểm về khoảng cách truyền, khả năng chống nhiễu và chi phí phần cứng thấp, LoRa trở thành một lựa chọn phù hợp cho các bài toán IoT tầm xa.
+Tuy nhiên, khả năng truyền xa của LoRa không phải là tuyệt đối. Trong môi trường thực tế, tín hiệu vô tuyến luôn chịu ảnh hưởng bởi khoảng cách, vật cản, địa hình, nhiễu điện từ, chất lượng anten và cấu hình truyền. Vì vậy, để xây dựng một hệ thống truyền dữ liệu ổn định hơn trong phạm vi rộng, cần xem xét các mô hình truyền thông linh hoạt hơn so với truyền trực tiếp một chặng.
+
+Hạn chế của mô hình truyền LoRa một chặng
+Trong mô hình truyền LoRa một chặng, node nguồn truyền dữ liệu trực tiếp đến node đích. Mô hình này đơn giản, dễ triển khai và phù hợp khi hai node nằm trong vùng phủ sóng của nhau. Tuy nhiên, khi khoảng cách giữa hai node tăng lên hoặc môi trường có nhiều vật cản, chất lượng liên kết có thể suy giảm đáng kể. Khi đó, gói tin có thể bị lỗi, bị mất hoặc không được node đích nhận đúng.
+Một hệ thống truyền một chặng có thể được mô tả như sau:
+
+Hình 1.1. Mô hình tổng quát hệ thống truyền một chặng
+Với mô hình này, toàn bộ quá trình truyền phụ thuộc vào chất lượng của liên kết trực tiếp giữa node nguồn và node đích. Nếu liên kết yếu, hệ thống không có node trung gian hỗ trợ chuyển tiếp. Điều này làm giới hạn vùng phủ sóng và giảm khả năng mở rộng của mạng.
+Trong thực tế, có nhiều tình huống mà truyền trực tiếp không phải là lựa chọn tối ưu. Ví dụ, một node cảm biến có thể được đặt ở vị trí xa gateway; giữa hai node có thể có tường, cây cối, thiết bị kim loại hoặc địa hình che khuất; hoặc hệ thống cần bao phủ một khu vực rộng hơn khả năng truyền trực tiếp của từng node. Trong các trường hợp đó, việc tăng công suất phát không phải lúc nào cũng phù hợp vì có thể làm tăng tiêu thụ năng lượng, tăng nhiễu và bị giới hạn bởi quy định tần số.
+Bên cạnh vấn đề khoảng cách, LoRa còn có đặc điểm tốc độ truyền không cao. Khi truyền gói tin dài, thời gian chiếm kênh truyền tăng lên. Nếu nhiều node cùng truyền trong cùng một khoảng thời gian, nguy cơ va chạm tín hiệu cũng tăng. Vì vậy, hệ thống truyền LoRa cần được thiết kế sao cho gói tin có kích thước hợp lý, có cơ chế kiểm soát lỗi và có khả năng đánh giá chất lượng truyền.
+Những hạn chế trên là cơ sở để nghiên cứu mô hình truyền LoRa đa chặng, trong đó dữ liệu không nhất thiết phải đi trực tiếp từ node nguồn đến node đích mà có thể được chuyển tiếp qua các node trung gian.
+Động lực xây dựng hệ thống LoRa đa chặng
+Mô hình truyền đa chặng cho phép dữ liệu được truyền qua một hoặc nhiều node trung gian trước khi đến được node đích hoặc đến toàn bộ mạng. Thay vì yêu cầu node nguồn phải truyền trực tiếp đến mọi node khác, hệ thống có thể tận dụng các node nằm giữa để mở rộng phạm vi truyền.
+
+
+Mô hình tổng quát có thể mô tả như sau:
+
+Hình 1.2. Mô hình tổng quát hệ thống truyền đa chặng
+Cách tiếp cận này có nhiều ưu điểm. Thứ nhất, vùng phủ sóng của toàn hệ thống có thể được mở rộng mà không cần mỗi node phải truyền với công suất lớn. Thứ hai, các liên kết ngắn hơn giữa các node có thể ổn định hơn so với một liên kết trực tiếp quá xa. Thứ ba, mô hình đa chặng phù hợp với các hệ thống cảm biến phân tán, nơi các node được bố trí rải rác trên một khu vực rộng.
+Tuy nhiên, truyền đa chặng cũng đặt ra các vấn đề kỹ thuật mới. Khi một node nhận được gói tin và phát lại, các node khác có thể nhận cùng một gói nhiều lần. Nếu không có cơ chế kiểm soát, gói tin có thể bị relay lặp lại liên tục, gây lãng phí tài nguyên và làm tăng khả năng tắc nghẽn kênh truyền. Ngoài ra, vì LoRa là môi trường truyền vô tuyến chia sẻ, việc nhiều node cùng phát lại có thể dẫn đến va chạm tín hiệu.
+Do đó, một hệ thống LoRa đa chặng cần có cơ chế nhận diện gói tin, tránh xử lý trùng lặp, kiểm tra lỗi, quản lý dữ liệu dài và đánh giá chất lượng truyền. Đây chính là các vấn đề trọng tâm mà đề tài hướng đến.
+Trong đề tài này, hệ thống được xây dựng theo hướng mạng nhiều node có khả năng broadcast và relay gói tin. Mỗi node có thể đóng vai trò gửi, nhận hoặc chuyển tiếp dữ liệu. Hệ thống không chỉ dừng ở việc truyền nhận cơ bản mà còn được bổ sung các thành phần phục vụ đánh giá truyền tin như đo cường độ tín hiệu, tỷ số tín hiệu trên nhiễu, tỷ lệ nén và tỷ lệ mất gói ước lượng. Các nội dung kỹ thuật chi tiết sẽ được trình bày trong các chương sau.
+Mục tiêu của đề tài
+Mục tiêu tổng quát của đề tài là thiết kế và triển khai một hệ thống truyền dữ liệu LoRa đa chặng trên phần cứng thật, sử dụng vi điều khiển ESP32 kết hợp với module LoRa SX1278. Hệ thống cần có khả năng gửi, nhận và chuyển tiếp dữ liệu giữa nhiều node, đồng thời cung cấp một số chỉ số phục vụ đánh giá chất lượng truyền tin.
+Các mục tiêu cụ thể của đề tài bao gồm:
+Xây dựng mô hình mạng LoRa gồm nhiều node độc lập.
+Thiết kế mỗi node dựa trên ESP32 và module LoRa SX1278.
+Cấu hình truyền thông LoRa phù hợp cho mô hình thử nghiệm đa chặng.
+Xây dựng cơ chế truyền dữ liệu dạng broadcast trong mạng.
+Cho phép node trung gian nhận và chuyển tiếp gói tin.
+Xây dựng cơ chế hạn chế xử lý trùng lặp gói tin.
+Dữ liệu truyền là chuỗi văn bản do người dùng nhập. Trong giai đoạn thử nghiệm, dữ liệu được nhập qua Serial Monitor; trong định hướng hoàn thiện, node gửi có thể nhận dữ liệu từ điện thoại thông qua Bluetooth.
+Hỗ trợ xử lý thông điệp có kích thước lớn hơn payload của một gói đơn.
+Tích hợp cơ chế kiểm tra lỗi để phát hiện packet không hợp lệ.
+Áp dụng kỹ thuật nén dữ liệu khi việc nén mang lại lợi ích.
+Ghi nhận một số chỉ số đánh giá như RSSI, SNR, entropy, tỷ lệ nén và tỷ lệ mất gói ước lượng.
+Thử nghiệm truyền dữ liệu thật giữa các node và phân tích kết quả thu được.
+Các mục tiêu trên được đặt ra nhằm đảm bảo đề tài không chỉ có phần demo truyền dữ liệu thực tế mà còn có cơ sở phân tích theo hướng của môn Lý thuyết thông tin.
+Đối tượng và phạm vi thực hiện
+Đối tượng thực hiện của đề tài là hệ thống truyền dữ liệu không dây sử dụng công nghệ LoRa, trong đó các node có khả năng hoạt động độc lập và tham gia vào quá trình truyền dữ liệu đa chặng. Mỗi node trong hệ thống gồm một vi điều khiển ESP32 và một module LoRa SX1278. Các node sử dụng cùng một chương trình chính, chỉ khác nhau ở mã định danh node được cấu hình khi biên dịch.
+Trong phạm vi bài tập lớn, hệ thống được triển khai với mô hình gồm ba node. Dữ liệu truyền là chuỗi văn bản được nhập từ từ điện thoại thông qua Bluetooth. Hệ thống tập trung vào mô hình truyền broadcast, trong đó một node phát thông điệp và các node còn lại có thể nhận hoặc chuyển tiếp thông điệp.
+Đề tài tập trung vào việc xây dựng giao thức truyền dữ liệu ở mức ứng dụng trên nền LoRa point-to-point. Hệ thống không triển khai đầy đủ chuẩn LoRaWAN, không sử dụng gateway kết nối Internet và chưa xây dựng thuật toán định tuyến tối ưu theo bảng định tuyến. Ngoài ra, đề tài chưa tích hợp cơ chế bảo mật hoặc mã hóa nội dung payload.
+Phạm vi này được lựa chọn để phù hợp với thời gian và yêu cầu của bài tập lớn, đồng thời vẫn đảm bảo hệ thống có đầy đủ các thành phần quan trọng của một mô hình truyền tin thực tế như phần cứng, truyền nhận dữ liệu, xử lý lỗi, chuyển tiếp gói tin và đánh giá một số chỉ số truyền thông.
+Phương pháp tiếp cận
+Đề tài được thực hiện theo hướng kết hợp giữa nghiên cứu lý thuyết, thiết kế hệ thống và triển khai thực nghiệm trên phần cứng. Trước hết, nhóm tìm hiểu các đặc điểm cơ bản của công nghệ LoRa, mô hình truyền đa chặng và các chỉ số thường dùng để đánh giá chất lượng truyền tin. Sau đó, hệ thống phần cứng được xây dựng dựa trên ESP32 và module LoRa SX1278.
+Ở phần phần mềm, chương trình được phát triển trên nền PlatformIO với framework Arduino. Mã nguồn được tổ chức thành các thành phần chính như khởi tạo LoRa, xử lý packet và xử lý nén dữ liệu. Việc chia tách mã nguồn theo chức năng giúp chương trình dễ theo dõi, dễ mở rộng và thuận tiện cho quá trình giải thích trong báo cáo.
+Sau khi hoàn thiện chương trình, các node được nạp firmware với mã định danh khác nhau. Quá trình thử nghiệm được thực hiện bằng cách nhập dữ liệu từ Serial Monitor (trong định hướng hoàn thiện, node gửi có thể nhận dữ liệu từ điện thoại thông qua Bluetooth) ở một node, sau đó quan sát log nhận, log chuyển tiếp và các chỉ số đo được ở các node còn lại. Từ kết quả thực nghiệm, nhóm tiến hành đánh giá khả năng truyền dữ liệu, hiệu quả nén và chất lượng liên kết vô tuyến.
+Quy trình thực hiện tổng quát của đề tài gồm các bước sau:
+Tìm hiểu công nghệ LoRa và mô hình truyền dữ liệu đa chặng.
+Lựa chọn phần cứng ESP32 và module LoRa SX1278.
+Thiết kế sơ đồ kết nối phần cứng.
+Xây dựng môi trường phát triển bằng PlatformIO.
+Cài đặt chương trình truyền nhận dữ liệu cho các node.
+Tích hợp các cơ chế kiểm tra lỗi, chuyển tiếp và xử lý dữ liệu.
+Nạp chương trình lên các node thực tế.
+Thực hiện truyền dữ liệu thử nghiệm.
+Ghi nhận log và các chỉ số đánh giá.
+Phân tích kết quả, nhận xét hạn chế và đề xuất hướng phát triển.
+Các yêu cầu đặt ra cho hệ thống
+Để đáp ứng mục tiêu của đề tài, hệ thống cần thỏa mãn một số yêu cầu cơ bản. Các yêu cầu này được xây dựng dựa trên đặc điểm của mạng LoRa đa chặng và tiêu chí đánh giá của bài tập lớn. Bảng dưới đây trình bày các yêu cầu chính của hệ thống:
+Yêu cầu
+Mô tả
+Truyền dữ liệu thật
+Hệ thống hoạt động trên phần cứng ESP32 và module LoRa SX1278
+Nhiều node
+Hệ thống gồm nhiều node có mã định danh khác nhau
+Truyền đa chặng
+Node trung gian có khả năng nhận và chuyển tiếp gói tin
+Broadcast
+Một node có thể gửi thông điệp đến toàn mạng
+Chống trùng lặp
+Gói tin đã xử lý không được xử lý lặp lại nhiều lần
+Kiểm tra lỗi
+Packet cần có cơ chế phát hiện lỗi trong quá trình truyền
+Hỗ trợ dữ liệu dài
+Thông điệp dài cần được xử lý phù hợp với giới hạn payload
+Tối ưu dữ liệu
+Hệ thống có khả năng giảm kích thước dữ liệu khi phù hợp
+Ghi nhận chỉ số
+Hệ thống cần ghi nhận một số thông số phục vụ đánh giá thực nghiệm
+Dễ mở rộng
+Kiến trúc phần mềm cần đủ rõ ràng để có thể phát triển thêm
+Bảng 1.1. Các yêu cầu chính của hệ thống
+Bên cạnh các yêu cầu chức năng, hệ thống cũng cần đáp ứng một số yêu cầu phi chức năng như hoạt động ổn định trong quá trình demo, dễ quan sát log trên Serial Monitor (định hướng sau này là trên điện thoại thông qua Bluetooth), cấu hình node rõ ràng và có khả năng giải thích được nguyên lý hoạt động.
+Các chỉ số đánh giá dự kiến
+Để đánh giá hệ thống truyền tin, đề tài sử dụng một số chỉ số phản ánh chất lượng dữ liệu, chất lượng kênh truyền và hiệu quả xử lý. Các chỉ số này được ghi nhận từ chương trình hoặc tính toán dựa trên log thực nghiệm.
+Bảng 1.2 trình bày các chỉ số đánh giá dự kiến trong đề tài.
+Chỉ số
+Ý nghĩa
+RSSI
+Cường độ tín hiệu nhận được tại node thu
+SNR
+Tỷ số tín hiệu trên nhiễu, phản ánh chất lượng kênh truyền
+Entropy
+Mức độ thông tin trung bình của dữ liệu nguồn
+Compression ratio
+Tỷ lệ giữa kích thước sau nén và kích thước ban đầu
+Packet loss
+Tỷ lệ gói hoặc fragment truyền thất bại
+Số fragment
+Số mảnh cần truyền cho một thông điệp
+Delay/RTT
+Độ trễ truyền hoặc thời gian phản hồi trong trường hợp có ACK
+Bảng 1.2. Các chỉ số đánh giá trong đề tài
+Các chỉ số trên sẽ được giải thích chi tiết hơn ở Chương 2 và được sử dụng trong phần thực nghiệm ở Chương 6. Trong Chương 1, các chỉ số này chỉ được nêu nhằm xác định định hướng đánh giá của đề tài.
+Ý nghĩa khoa học và thực tiễn của đề tài
+Về mặt khoa học, đề tài giúp liên hệ giữa các kiến thức lý thuyết và một hệ thống truyền tin thực tế. Các nội dung như mã hóa nguồn, phát hiện lỗi, chất lượng kênh truyền và mất gói không chỉ được trình bày dưới dạng khái niệm mà còn được áp dụng trong quá trình thiết kế và thử nghiệm hệ thống. Điều này giúp làm rõ vai trò của Lý thuyết thông tin trong các hệ thống truyền thông không dây.
+Về mặt thực tiễn, đề tài cho thấy khả năng xây dựng một mạng truyền dữ liệu không dây tầm xa với chi phí thấp. Mô hình LoRa đa chặng có thể được phát triển cho các ứng dụng như giám sát nông nghiệp, thu thập dữ liệu môi trường, cảnh báo từ xa hoặc kết nối các thiết bị cảm biến trong khu vực rộng. Với cách tiếp cận nhiều node, hệ thống có tiềm năng mở rộng phạm vi truyền mà không cần phụ thuộc hoàn toàn vào hạ tầng mạng sẵn có.
+Ngoài ra, quá trình thực hiện đề tài cũng giúp người thực hiện rèn luyện nhiều kỹ năng quan trọng như thiết kế hệ thống nhúng, cấu hình truyền thông SPI, lập trình vi điều khiển, làm việc với module vô tuyến, thiết kế giao thức truyền dữ liệu, đọc log thực nghiệm và phân tích hiệu năng hệ thống.
+Đóng góp chính của đề tài
+Các đóng góp chính của đề tài có thể tóm tắt như sau:
+Xây dựng được hệ thống truyền dữ liệu thật sử dụng ESP32 và module LoRa SX1278.
+Tổ chức được mô hình nhiều node có khả năng gửi, nhận và chuyển tiếp dữ liệu.
+Thiết kế được cơ chế truyền broadcast phù hợp với mô hình thử nghiệm.
+Tích hợp cơ chế hạn chế xử lý trùng lặp trong quá trình relay.
+Hỗ trợ xử lý thông điệp văn bản có kích thước vượt quá giới hạn payload của một gói đơn.
+Tích hợp kiểm tra lỗi nhằm loại bỏ packet không hợp lệ.
+Áp dụng kỹ thuật nén dữ liệu để cải thiện hiệu quả truyền trong trường hợp phù hợp.
+Ghi nhận được các chỉ số phục vụ đánh giá như RSSI, SNR, entropy, tỷ lệ nén và tỷ lệ mất gói ước lượng.
+Xây dựng nền tảng có thể mở rộng cho các hướng phát triển như định tuyến tối ưu, đo throughput tự động, bảo mật payload hoặc giao diện giám sát.
+Cấu trúc báo cáo
+Phần còn lại của báo cáo được tổ chức như sau:
+Chương 2 trình bày cơ sở lý thuyết liên quan đến đề tài, bao gồm công nghệ LoRa, mô hình truyền đa chặng, các khái niệm về entropy, mã hóa nguồn, kiểm tra lỗi và các chỉ số đánh giá chất lượng truyền tin.
+Chương 3 trình bày phân tích và thiết kế hệ thống, bao gồm kiến trúc tổng thể, sơ đồ khối, thiết kế phần cứng, vai trò của từng node và luồng hoạt động tổng quát.
+Chương 4 trình bày thiết kế giao thức và thuật toán, bao gồm định dạng gói tin, cơ chế gửi nhận, chuyển tiếp, chống trùng lặp, phân mảnh, ghép mảnh và xử lý dữ liệu.
+Chương 5 trình bày quá trình cài đặt hệ thống, môi trường phát triển, cấu trúc mã nguồn, cấu hình cho từng node và các thành phần chính trong chương trình.
+Chương 6 trình bày kết quả thực nghiệm và đánh giá, bao gồm kịch bản thử nghiệm, log truyền nhận, các chỉ số đo được và phân tích hiệu quả của hệ thống.
+Chương 7 trình bày kết luận, các hạn chế còn tồn tại và hướng phát triển trong tương lai.
+
+CƠ SỞ LÝ THUYẾT
+Tổng quan về hệ thống truyền tin
+Một hệ thống truyền tin cơ bản gồm ba thành phần chính: nguồn tin, kênh truyền và đích nhận. Nguồn tin tạo ra dữ liệu cần truyền. Bộ phát chuyển dữ liệu thành tín hiệu phù hợp với môi trường truyền. Kênh truyền là môi trường vật lý mà tín hiệu đi qua. Bộ thu có nhiệm vụ thu nhận tín hiệu, kiểm tra tính hợp lệ và khôi phục dữ liệu ban đầu.
+Trong đề tài này, nguồn tin là dữ liệu văn bản do người dùng nhập vào hệ thống. Ở giai đoạn thử nghiệm ban đầu, dữ liệu có thể được nhập thông qua Serial Monitor để thuận tiện cho việc kiểm tra chương trình và quan sát log truyền nhận. Trong định hướng hoàn thiện hệ thống, ESP32 có thể nhận dữ liệu từ điện thoại thông qua Bluetooth, sau đó đóng gói và truyền qua mạng LoRa. Như vậy, Serial Monitor hoặc Bluetooth chỉ đóng vai trò là giao diện đầu vào, còn kênh truyền chính giữa các node vẫn là LoRa.
+Bộ phát trong hệ thống là vi điều khiển ESP32 kết hợp với module LoRa SX1278. ESP32 đảm nhiệm việc nhận dữ liệu đầu vào, xử lý dữ liệu, đóng gói packet, kiểm tra lỗi và điều khiển module LoRa. Module LoRa SX1278 đảm nhiệm việc phát và thu tín hiệu vô tuyến. Kênh truyền là môi trường vô tuyến ở băng tần 433 MHz. Đích nhận là một node LoRa khác trong mạng.
+Do hệ thống được xây dựng theo mô hình đa chặng, một node có thể đảm nhiệm nhiều vai trò khác nhau. Node có thể là node nguồn khi khởi tạo thông điệp, là node nhận khi nhận thông điệp từ node khác, hoặc là node trung gian khi chuyển tiếp gói tin trong mạng. Cách tổ chức này giúp hệ thống linh hoạt hơn so với mô hình truyền một chặng.
+
+Hình 2.1. Mô hình hệ thống truyền tin tổng quát 
+Trong thực tế, kênh truyền vô tuyến không lý tưởng. Tín hiệu có thể bị suy hao theo khoảng cách, bị ảnh hưởng bởi vật cản, nhiễu điện từ hoặc va chạm với tín hiệu từ node khác. Vì vậy, hệ thống truyền tin cần có các cơ chế như kiểm tra lỗi, hạn chế trùng lặp packet, đánh giá chất lượng kênh truyền và tối ưu kích thước dữ liệu.
+Công nghệ LoRa
+LoRa là công nghệ truyền thông không dây tầm xa, tiêu thụ năng lượng thấp, thường được sử dụng trong các hệ thống LPWAN. LoRa phù hợp với các ứng dụng truyền dữ liệu nhỏ, không yêu cầu tốc độ cao nhưng cần vùng phủ rộng và khả năng hoạt động ổn định.
+LoRa sử dụng kỹ thuật điều chế Chirp Spread Spectrum (CSS). Thay vì truyền tín hiệu ở một tần số cố định, tín hiệu LoRa được trải trên một dải tần bằng các chirp có tần số thay đổi theo thời gian. Nhờ cơ chế trải phổ này, LoRa có khả năng chống nhiễu tốt, độ nhạy thu cao và có thể truyền xa với công suất phát thấp.
+Các ưu điểm chính của LoRa gồm:
+Khoảng cách truyền xa hơn nhiều công nghệ không dây tầm ngắn.
+Tiêu thụ năng lượng thấp, phù hợp với các thiết bị IoT.
+Khả năng chống nhiễu tốt nhờ kỹ thuật trải phổ.
+Chi phí phần cứng thấp.
+Phù hợp với các bản tin nhỏ như dữ liệu cảm biến, cảnh báo, thông điệp điều khiển.
+Tuy nhiên, LoRa cũng có một số hạn chế:
+Tốc độ truyền dữ liệu thấp hơn Wi-Fi hoặc mạng di động.
+Không phù hợp với dữ liệu dung lượng lớn như ảnh, âm thanh hoặc video.
+Thời gian chiếm kênh tăng khi gói tin dài hoặc sử dụng Spreading Factor cao.
+Dễ xảy ra va chạm nếu nhiều node cùng phát trong cùng thời điểm.
+Cần thiết kế giao thức phù hợp nếu muốn xây dựng mạng nhiều node.
+Các tham số quan trọng của LoRa bao gồm:
+Tham số
+Ý nghĩa
+Frequency 
+Tần số hoạt động của module LoRa
+Spreading Factor
+Hệ số trải phổ, ảnh hưởng đến tốc độ và khoảng cách truyền
+Bandwidth
+Băng thông tín hiệu
+Coding Rate
+Tỷ lệ mã sửa lỗi FEC
+Preamble Length
+Độ dài chuỗi đồng bộ đầu gói
+Sync Word
+Giá trị nhận diện mạng LoRa riêng
+Bảng 2.1.  Tham số quan trọng của LoRa
+Trong đề tài, hệ thống sử dụng tần số 433 MHz, Spreading Factor SF7, Bandwidth 125 kHz, Coding Rate 4/5, Sync Word 0x12 và Preamble Length bằng 8. Đây là cấu hình ưu tiên tốc độ tương đối cao và độ trễ thấp, phù hợp với mô hình thử nghiệm nhiều node trong phạm vi gần đến trung bình.
+Spreading Factor là một trong những tham số quan trọng nhất. SF càng cao thì độ nhạy thu càng tốt, khả năng truyền xa càng cao, nhưng tốc độ truyền giảm và thời gian chiếm kênh tăng. Ngược lại, SF thấp giúp truyền nhanh hơn nhưng phạm vi truyền và khả năng chống nhiễu giảm. Trong hệ thống này, SF7 được lựa chọn để cân bằng giữa tốc độ, độ trễ và khoảng cách thử nghiệm.
+Bandwidth cũng ảnh hưởng trực tiếp đến tốc độ truyền. Băng thông lớn giúp tăng tốc độ dữ liệu và giảm thời gian on-air, nhưng làm giảm độ nhạy thu. Giá trị 125 kHz là cấu hình phổ biến, cân bằng giữa độ ổn định và tốc độ.
+Coding Rate thể hiện mức độ thêm dữ liệu dư thừa phục vụ sửa lỗi. Với Coding Rate 4/5, cứ 4 bit dữ liệu sẽ có thêm 1 bit phục vụ phát hiện hoặc sửa lỗi ở tầng vật lý. Coding Rate cao hơn giúp tăng độ tin cậy nhưng làm giảm tốc độ truyền hiệu dụng.2.3. LoRa và LoRaWAN
+Cần phân biệt giữa LoRa và LoRaWAN. LoRa là công nghệ điều chế ở tầng vật lý, quy định cách tín hiệu được phát và thu qua môi trường vô tuyến. Trong khi đó, LoRaWAN là giao thức mạng xây dựng phía trên LoRa, quy định kiến trúc mạng, quản lý thiết bị, gateway, bảo mật và truyền dữ liệu lên server.
+Đề tài này sử dụng LoRa ở chế độ point-to-point thông qua thư viện Arduino LoRa, không triển khai đầy đủ LoRaWAN. Việc không sử dụng LoRaWAN giúp hệ thống đơn giản hơn, dễ kiểm soát packet và phù hợp với mục tiêu tự thiết kế giao thức truyền dữ liệu đa chặng ở mức ứng dụng.
+LoRa và LoRaWAN
+Cần phân biệt giữa LoRa và LoRaWAN. LoRa là công nghệ điều chế ở tầng vật lý, quy định cách tín hiệu được phát và thu qua môi trường vô tuyến. Trong khi đó, LoRaWAN là giao thức mạng xây dựng phía trên LoRa, quy định kiến trúc mạng, quản lý thiết bị, gateway, bảo mật và truyền dữ liệu lên server.
+Đề tài này sử dụng LoRa ở chế độ point-to-point thông qua thư viện Arduino LoRa, không triển khai đầy đủ LoRaWAN. Việc không sử dụng LoRaWAN giúp hệ thống đơn giản hơn, dễ kiểm soát packet và phù hợp với mục tiêu tự thiết kế giao thức truyền dữ liệu đa chặng ở mức ứng dụng.
+Có thể hiểu rằng LoRa trong đề tài đóng vai trò là phương tiện truyền vật lý, còn các cơ chế như định dạng packet, relay, kiểm tra lỗi, chống trùng lặp, phân mảnh và nén dữ liệu được nhóm xây dựng ở tầng ứng dụng.
+Mạng truyền dữ liệu đa chặng
+Trong mô hình truyền một chặng, node nguồn truyền trực tiếp dữ liệu đến node đích. Cách này đơn giản nhưng phụ thuộc hoàn toàn vào chất lượng liên kết giữa hai node. Nếu khoảng cách quá xa hoặc tín hiệu bị che khuất, quá trình truyền có thể thất bại.
+Mạng truyền đa chặng cho phép dữ liệu đi qua một hoặc nhiều node trung gian. Node trung gian nhận gói tin từ node trước, sau đó phát lại gói tin để các node khác có thể nhận được. Cách tiếp cận này giúp mở rộng vùng phủ sóng mà không cần tăng công suất phát của từng node.
+Mô hình truyền một chặng:
+
+Hình 2.2. Mô hình truyền một chặng
+Mô hình truyền đa chặng:
+
+Hình 2.3. Mô hình truyền đa chặng
+Trong đề tài, cơ chế truyền đa chặng được xây dựng theo hướng flooding. Khi một node nhận được gói broadcast hợp lệ, node đó có thể chuyển tiếp lại gói tin cho các node khác. Flooding đơn giản, dễ triển khai và phù hợp với mạng nhỏ. Tuy nhiên, flooding cũng có nhược điểm là có thể tạo ra nhiều bản sao của cùng một gói tin, gây lãng phí băng thông và tăng nguy cơ va chạm.
+Để hạn chế vấn đề này, hệ thống cần cơ chế chống trùng lặp. Mỗi gói tin được nhận diện bằng node nguồn và số thứ tự gói. Nếu một node đã xử lý gói đó, khi nhận lại bản sao của cùng gói, node sẽ bỏ qua và không relay tiếp. Cơ chế này giúp giảm hiện tượng broadcast storm trong mạng flooding.
+Trong các chương sau, cơ chế chống trùng lặp, relay và xử lý packet sẽ được trình bày chi tiết hơn ở phần thiết kế giao thức và thuật toán.
+Entropy trong lý thuyết thông tin
+Entropy là đại lượng cơ bản trong lý thuyết thông tin, dùng để đo mức độ bất định hoặc lượng thông tin trung bình của một nguồn tin. Với một nguồn rời rạc có các ký hiệu xuất hiện với xác suất , entropy được tính theo công thức:
+
+
+Trong đó:
+ là entropy của nguồn tin.
+ là xác suất xuất hiện của ký hiệu .
+Đơn vị thường dùng là bit/ký hiệu.
+Entropy càng cao thì dữ liệu càng khó dự đoán và khả năng nén càng thấp. Ngược lại, entropy thấp cho thấy dữ liệu có nhiều quy luật hoặc ký tự lặp lại, do đó có khả năng nén tốt hơn.
+Ví dụ, một chuỗi gồm nhiều ký tự giống nhau có entropy thấp vì ký tự tiếp theo dễ dự đoán. Trong khi đó, một chuỗi có nhiều ký tự khác nhau xuất hiện với xác suất gần bằng nhau sẽ có entropy cao hơn. Điều này ảnh hưởng trực tiếp đến khả năng nén của dữ liệu.
+Trong đề tài, entropy được tính trên chuỗi văn bản trước khi truyền. Giá trị entropy giúp đánh giá mức độ phù hợp của dữ liệu với thuật toán nén Huffman. Một thông điệp có nhiều ký tự lặp lại hoặc nhiều ký tự phổ biến thường có entropy thấp hơn và có khả năng nén hiệu quả hơn. Một chuỗi ngẫu nhiên hoặc có phân bố ký tự đều hơn thường có entropy cao hơn, khi đó việc nén có thể không mang lại lợi ích rõ rệt.
+Mã hóa nguồn và thuật toán Huffman
+Mã hóa nguồn là quá trình biểu diễn lại dữ liệu nguồn bằng một dạng mã khác nhằm giảm dư thừa và tiết kiệm số bit cần truyền. Trong hệ thống truyền tin, mã hóa nguồn giúp giảm kích thước dữ liệu, từ đó giảm thời gian truyền và giảm thời gian chiếm kênh.
+Huffman coding là một thuật toán mã hóa nguồn phổ biến. Ý tưởng chính của Huffman là gán mã ngắn cho các ký hiệu xuất hiện thường xuyên và mã dài hơn cho các ký hiệu ít xuất hiện. Nhờ đó, độ dài trung bình của chuỗi mã sau khi nén có thể nhỏ hơn so với cách biểu diễn cố định 8 bit/ký tự.
+Ví dụ, trong văn bản tiếng Anh hoặc các chuỗi log, các ký tự như khoảng trắng, e, t, a, o thường xuất hiện nhiều hơn một số ký tự khác. Nếu các ký tự này được gán mã ngắn, tổng số bit cần truyền có thể giảm xuống.
+Trong đề tài, hệ thống sử dụng Static Huffman. Khác với Dynamic Huffman, Static Huffman sử dụng một mô hình tần suất cố định được biết trước ở cả bên gửi và bên nhận. Vì vậy, hệ thống không cần gửi kèm bảng mã trong mỗi thông điệp. Điều này rất phù hợp với LoRa, vì LoRa có băng thông thấp và cần hạn chế overhead.
+Ưu điểm của Static Huffman:
+Không cần gửi codebook kèm dữ liệu.
+Phù hợp với dữ liệu văn bản ASCII hoặc log có phân bố ký tự tương đối quen thuộc.
+Giúp giảm số byte truyền nếu dữ liệu có nhiều ký tự phổ biến.
+Hạn chế của Static Huffman:
+Không tối ưu cho mọi loại dữ liệu.
+Với dữ liệu ngẫu nhiên hoặc entropy cao, dữ liệu sau nén có thể không nhỏ hơn dữ liệu gốc.
+Không phù hợp trực tiếp với chuỗi Unicode tiếng Việt nếu hệ thống chỉ hỗ trợ ASCII cơ bản.
+Vì vậy, hệ thống trong đề tài chỉ sử dụng dữ liệu nén nếu kích thước sau nén nhỏ hơn dữ liệu ban đầu. Nếu nén không có lợi, hệ thống sẽ truyền dữ liệu thô. Cách lựa chọn này giúp tránh trường hợp thuật toán nén làm tăng kích thước bản tin.
+Tỷ lệ nén
+Tỷ lệ nén là chỉ số dùng để đánh giá hiệu quả của thuật toán nén. Trong đề tài, tỷ lệ nén được tính theo công thức:
+
+Trong đó:
+Raw Bytes là số byte của dữ liệu ban đầu.
+Encoded Bytes là số byte sau khi nén.
+Nếu Compression Ratio < 1, dữ liệu sau nén nhỏ hơn dữ liệu gốc, việc nén có lợi. Nếu Compression Ratio ≥ 1, dữ liệu sau nén không nhỏ hơn dữ liệu gốc, hệ thống nên truyền dữ liệu thô để tránh tăng overhead.
+Chỉ số này được in ra khi gửi dữ liệu, giúp quan sát trực tiếp hiệu quả nén của từng thông điệp. Khi hệ thống được mở rộng với giao diện Bluetooth trên điện thoại, compression ratio có thể được hiển thị trực tiếp trên ứng dụng để người dùng thấy được mức độ tối ưu dữ liệu trước khi truyền qua LoRa.
+Kiểm tra lỗi CRC
+Trong truyền thông vô tuyến, dữ liệu có thể bị sai lệch do nhiễu, suy hao hoặc va chạm tín hiệu. Vì vậy, hệ thống cần cơ chế phát hiện lỗi để tránh xử lý các gói tin không hợp lệ.
+CRC (Cyclic Redundancy Check) là một phương pháp phát hiện lỗi phổ biến. Bên gửi tính giá trị CRC dựa trên nội dung gói tin và gửi kèm giá trị này. Bên nhận tính lại CRC từ dữ liệu nhận được và so sánh với CRC trong packet. Nếu hai giá trị khác nhau, packet được xem là bị lỗi và sẽ bị loại bỏ.
+Trong đề tài, hệ thống sử dụng CRC16-CCITT. Đây là dạng CRC 16 bit, sử dụng giá trị khởi tạo 0xFFFF và đa thức 0x1021. CRC giúp phát hiện các lỗi bit trong packet ở mức phần mềm, bổ sung cho cơ chế CRC phần cứng của LoRa.
+CRC không sửa lỗi, mà chỉ giúp phát hiện lỗi. Nếu packet bị lỗi, hệ thống sẽ bỏ qua packet đó. Trong trường hợp truyền có ACK, bên gửi có thể gửi lại packet nếu không nhận được xác nhận trong thời gian chờ.
+ACK và cơ chế truyền lại ARQ
+ACK là gói xác nhận được gửi từ node nhận về node gửi để thông báo rằng gói dữ liệu đã được nhận thành công. ARQ (Automatic Repeat reQuest) là cơ chế tự động gửi lại khi không nhận được ACK trong một khoảng thời gian nhất định.
+Trong truyền unicast, ACK và ARQ giúp tăng độ tin cậy vì bên gửi có thể biết gói tin đã đến node kế tiếp hay chưa. Nếu hết thời gian chờ mà không nhận được ACK, bên gửi có thể thực hiện gửi lại.
+Tuy nhiên, trong truyền broadcast, nếu tất cả node nhận đều gửi ACK, hệ thống có thể gặp hiện tượng ACK storm, tức là quá nhiều gói xác nhận được phát cùng lúc, gây va chạm và tắc nghẽn kênh. Vì vậy, trong đề tài, đối với gói broadcast, hệ thống tắt yêu cầu ACK để tránh bão ACK. Đây là lựa chọn phù hợp với mô hình flooding trong mạng nhỏ.
+Cách tiếp cận này thể hiện sự đánh đổi giữa độ tin cậy và độ ổn định của kênh truyền. Nếu dùng ACK cho mọi broadcast, hệ thống có thể biết nhiều hơn về trạng thái nhận gói nhưng lại tạo thêm quá nhiều lưu lượng phản hồi. Nếu tắt ACK cho broadcast, hệ thống giảm được nguy cơ tắc nghẽn nhưng phải chấp nhận rằng không phải mọi gói đều có xác nhận từ từng node.
+RSSI và SNR
+RSSI (Received Signal Strength Indicator) là chỉ số thể hiện cường độ tín hiệu nhận được tại node thu. RSSI thường có giá trị âm, đơn vị dBm. Giá trị RSSI càng gần 0 thì tín hiệu càng mạnh. Ví dụ, RSSI = -60 dBm thường mạnh hơn RSSI = -100 dBm.
+SNR (Signal-to-Noise Ratio) là tỷ số giữa công suất tín hiệu và công suất nhiễu. SNR càng cao thì tín hiệu càng rõ so với nhiễu, khả năng nhận đúng dữ liệu càng tốt. Nếu SNR quá thấp, hệ thống dễ gặp lỗi bit hoặc mất gói.
+Trong đề tài, mỗi khi node nhận được packet hợp lệ, chương trình ghi nhận RSSI và SNR. Hai chỉ số này được dùng để đánh giá chất lượng liên kết giữa các node trong quá trình thực nghiệm.
+Khi khoảng cách giữa các node tăng hoặc có nhiều vật cản, RSSI thường giảm. SNR cũng có thể giảm nếu nhiễu môi trường tăng. Việc quan sát RSSI và SNR giúp phân tích vì sao một số kịch bản truyền có độ ổn định tốt hơn hoặc kém hơn các kịch bản khác.
+Packet loss, delay và throughput
+Packet loss là tỷ lệ gói tin bị mất hoặc truyền không thành công. Trong hệ thống LoRa multi-hop, packet loss có thể xảy ra do nhiễu, khoảng cách xa, collision hoặc node đang bận truyền nên không nhận được gói khác.
+Delay là độ trễ truyền dữ liệu từ lúc gửi đến lúc nhận. Trong trường hợp có ACK, có thể đo RTT (Round Trip Time), tức thời gian từ lúc gửi packet đến lúc nhận được ACK. Đối với multi-hop, delay thường tăng theo số chặng vì gói tin phải được xử lý và relay qua nhiều node.
+Throughput là lượng dữ liệu truyền thành công trong một đơn vị thời gian. Với LoRa, throughput thường thấp hơn nhiều so với Wi-Fi hoặc mạng di động, do đó việc giảm kích thước dữ liệu và hạn chế truyền lặp là rất quan trọng.
+Trong phạm vi đề tài, các chỉ số được ưu tiên quan sát gồm RSSI, SNR, entropy, compression ratio và packet loss ước lượng. Ở giai đoạn thử nghiệm, các chỉ số này có thể được quan sát qua Serial Monitor. Khi hệ thống được mở rộng với giao diện Bluetooth trên điện thoại, các chỉ số này có thể được hiển thị trực tiếp trên ứng dụng di động để tăng tính trực quan khi demo.
+Bluetooth trong vai trò giao diện đầu vào
+ESP32 là vi điều khiển tích hợp sẵn Wi-Fi và Bluetooth. Do đó, ngoài việc nhập dữ liệu thông qua Serial Monitor trong giai đoạn thử nghiệm, hệ thống có thể được mở rộng để nhận dữ liệu từ điện thoại thông qua Bluetooth. Trong mô hình này, điện thoại đóng vai trò giao diện người dùng, cho phép nhập nội dung cần truyền và gửi nội dung đó đến ESP32.
+Sau khi nhận dữ liệu qua Bluetooth, ESP32 sẽ xử lý tương tự như dữ liệu nhập từ Serial Monitor: kiểm tra dữ liệu đầu vào, tính toán các thông số cần thiết, đóng gói packet, kiểm tra khả năng nén, phân mảnh nếu cần và truyền qua module LoRa.
+Việc bổ sung Bluetooth không làm thay đổi bản chất của kênh truyền LoRa trong đề tài. Bluetooth chỉ đóng vai trò là kênh giao tiếp cục bộ giữa người dùng và node LoRa, còn quá trình truyền dữ liệu giữa các node vẫn được thực hiện bằng LoRa. Mô hình mở rộng có thể được mô tả như sau:
+
+Hình 2.4. Mô hình mở rộng hệ thống truyền LoRa đa chặng
+Việc sử dụng Bluetooth làm giao diện đầu vào mang lại một số lợi ích:
+Tăng tính trực quan khi demo hệ thống.
+Không cần phụ thuộc vào máy tính và Serial Monitor để nhập dữ liệu.
+Tận dụng khả năng Bluetooth có sẵn trên ESP32.
+Cho phép phát triển ứng dụng điều khiển hoặc giám sát trên điện thoại.
+Có thể hiển thị log truyền nhận, RSSI, SNR hoặc trạng thái gửi ngay trên giao diện di động.
+Tuy nhiên, Bluetooth trong hệ thống này không thay thế LoRa. Bluetooth chỉ phục vụ giao tiếp gần giữa điện thoại và node gửi, trong khi LoRa vẫn là công nghệ truyền dữ liệu chính giữa các node trong mạng đa chặng.
+Kết luận chương
+Chương này đã trình bày các cơ sở lý thuyết quan trọng phục vụ cho việc thiết kế hệ thống LoRa đa chặng. Công nghệ LoRa cung cấp nền tảng truyền thông tầm xa, tiêu thụ năng lượng thấp. Mô hình đa chặng giúp mở rộng vùng phủ sóng nhưng cần cơ chế kiểm soát trùng lặp và hạn chế va chạm. Entropy và Huffman coding được sử dụng để phân tích và tối ưu dữ liệu nguồn. CRC, ACK, RSSI, SNR và packet loss là các thành phần quan trọng để đánh giá độ tin cậy và chất lượng của quá trình truyền.
+Bên cạnh đó, chương này cũng làm rõ vai trò của Bluetooth trong định hướng mở rộng hệ thống. Bluetooth được xem là giao diện đầu vào giữa điện thoại và ESP32, giúp hệ thống thân thiện hơn khi demo và sử dụng, trong khi LoRa vẫn là kênh truyền chính giữa các node.
+Các cơ sở lý thuyết này là nền tảng cho phần phân tích, thiết kế hệ thống và thuật toán được trình bày trong các chương tiếp theo.
+3. MÔ HÌNH HỆ THỐNG VÀ THIẾT KẾ THUẬT TOÁN
+Chương này trình bày chi tiết về thiết kế phần cứng, kiến trúc luồng dữ liệu của hệ thống, cũng như cách thức áp dụng các cơ sở lý thuyết vào cấu trúc gói tin, thuật toán nén dữ liệu và thuật toán định tuyến đa chặng. Với mục tiêu tối ưu hóa khả năng truyền tải và độ tin cậy, hệ thống được thiết kế tích hợp nhiều cơ chế xử lý ở cấp độ bit (bit-level).
+3.1. Thiết kế phần cứng hệ thống
+Hệ thống tại mỗi Node bao gồm hai thành phần chính: Vi điều khiển ESP32 và Module thu phát vô tuyến LoRa Ai-Thinker Ra-02 (SX1278). ESP32 đóng vai trò bộ não trung tâm, xử lý các thuật toán nén và định tuyến phức tạp, đồng thời cung cấp kết nối Bluetooth để giao tiếp với điện thoại di động.
+Sơ đồ kết nối phần cứng (Pinout)
+Module LoRa giao tiếp với ESP32 thông qua bus SPI tốc độ cao. Sự ổn định của hệ thống phụ thuộc rất lớn vào thiết kế phần cứng, đặc biệt là nguồn cấp và ăng-ten.
+Chân ESP32
+Chân LoRa Ra-02
+Chức năng (Ý nghĩa)
+3V3
+3.3V
+Nguồn cấp 
+GND
+GND
+Nối đất (Chung Mass)
+GPIO 5
+NSS
+Chip Select (Chọn Slave giao tiếp trên bus SPI)
+GPIO 18
+SCK
+Xung nhịp đồng bộ giao tiếp SPI
+GPIO 19
+MISO
+Dữ liệu truyền từ LoRa gửi về ESP32
+GPIO 27
+MOSI
+Dữ liệu truyền từ ESP32 gửi xuống LoRa
+GPIO 14
+RST
+Chân Reset phần cứng để khởi tạo trạng thái mặc định cho SX1278
+GPIO 26
+DIO0
+Chân ngắt (Interrupt) kích hoạt khi truyền xong (TxDone) hoặc nhận xong (RxDone)
+
