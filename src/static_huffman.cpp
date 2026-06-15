@@ -124,6 +124,10 @@ void build_codes() {
     int16_t current = symbol;
 
     while (nodes[current].parent != HUFFMAN_NO_NODE) {
+      if (bitLen >= 32) {
+        Serial.println("FATAL: Huffman code exceeds 32 bits");
+        break; // Tránh tràn biến uint32_t
+      }
       int16_t parent = nodes[current].parent;
       uint8_t bit = (nodes[parent].right == current) ? 1 : 0;
       reversedBits |= static_cast<uint32_t>(bit) << bitLen;

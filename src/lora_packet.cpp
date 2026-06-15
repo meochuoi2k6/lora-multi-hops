@@ -32,6 +32,7 @@ uint16_t nextMsgId = 1;
 struct SeenPacket {
   uint8_t src;  ///< ID của node gốc tạo ra gói tin
   uint16_t seq; ///< Số thứ tự của gói tin đó
+  unsigned long timestamp; ///< Thời điểm ghi nhận (millis), cho phép retry sau khi hết hạn
 };
 
 /// Bộ đệm vòng (Circular Buffer) lưu lại 64 gói tin gần nhất đã nghe thấy.
@@ -163,6 +164,10 @@ RxMessageBuffer* allocate_rx_buffer() {
 bool was_seen(uint8_t src, uint16_t seq) {
     for(const SeenPacket &seen : seenPackets) {
         if (seen.src == src && seen.seq == seq) {
+            // Cho phép gói tin đi qua lại nếu đã quá 5 giây (hỗ trợ End-to-End retry qua Relay)
+            if (millis() - seen.timestamp > 5000) {
+                return false;
+            }
             return true;
         }
     }
@@ -180,51 +185,19 @@ uint8_t seenIndex = 0;
  * @param seq Số thứ tự của gói tin.
  */
 void mark_seen(uint8_t src, uint16_t seq) {
-    seenPackets[seenIndex] = {src, seq};
+    seenPackets[seenIndex] = {src, seq, millis()};
     seenIndex = (seenIndex + 1) % (sizeof(seenPackets) / sizeof(seenPackets[0]));
 }
 
 uint32_t txFragments = 0; // Biến đếm số phân mảnh đã gửi thành công
 uint32_t txFailedFragments = 0; // Biến đếm số phân mảnh đã gửi thất bại (sau nhiều lần thử)
 
-/**
- * @brief Tính toán CRC16-CCITT cho dữ liệu đầu vào.
- * @param data Con trỏ đến mảng byte cần tính CRC.
- * @param len Độ dài của mảng dữ liệu (số byte).
- * @return Giá trị CRC16 tính được.
- */
-uint16_t crc16_ccitt(const uint8_t *data, size_t len) {
-  uint16_t crc = 0xFFFF;
-  
-  for (size_t i = 0; i < len; ++i) {
-    crc ^= (uint16_t)data[i] << 8;
-    for (uint8_t bit = 0; bit < 8; ++bit) {
-      if (crc & 0x8000) {
-        crc = (crc << 1) ^ 0x1021;
-      } else {
-        crc = (crc << 1);
-      }
-    }
-  }
-  return crc;
-}
-
-/**
- * @brief Tính toán CRC cho một gói tin LoRaPacket.
- * @param packet Gói tin cần tính CRC.
- * @return Giá trị CRC16 của gói tin.
- */
-uint16_t packet_crc(const LoRaPacket &packet) {
-    LoRaPacket copy = packet;
-    copy.crc = 0; // Đặt trường CRC về 0 trước khi tính toán
-    return crc16_ccitt(reinterpret_cast<const uint8_t*>(&copy), sizeof(copy)); //ep kiểu để tính toán trên toàn bộ cấu trúc
-}
 
 /***
- * @brief Kiểm tra tính hợp lệ của một gói tin dựa trên phiên bản, độ dài, chỉ số phân mảnh, và CRC.
+ * @brief Kiểm tra tính hợp lệ của một gói tin dựa trên phiên bản, độ dài, và chỉ số phân mảnh.
  * @param packet Gói tin cần kiểm tra.
  * @return - `true` Nếu gói tin hợp lệ và có thể xử lý tiếp.
- * @return - `false` Nếu gói tin không hợp lệ (phiên bản sai, độ dài payload vượt quá giới hạn, chỉ số phân mảnh không hợp lệ, hoặc CRC không khớp).
+ * @return - `false` Nếu gói tin không hợp lệ (phiên bản sai, độ dài payload vượt quá giới hạn, chỉ số phân mảnh không hợp lệ).
  * @note Việc kiểm tra này rất quan trọng để đảm bảo rằng node chỉ xử lý các gói tin đúng định dạng và không bị lỗi trong quá trình truyền tải, từ đó tránh lãng phí tài nguyên cho các gói tin hỏng hoặc giả mạo.
  */
 bool validate_packet(const LoRaPacket &packet) {
@@ -244,16 +217,9 @@ bool validate_packet(const LoRaPacket &packet) {
     return false;
   }
 
-  return packet.crc == packet_crc(packet);
+  return true;
 }
 
-/** @brief Hoàn thiện gói tin trước khi gửi bằng cách tính toán và điền giá trị CRC.
- * @param packet Gói tin cần hoàn thiện.
- */
-void finalize_packet(LoRaPacket &packet) {
-  packet.crc = 0;
-  packet.crc = packet_crc(packet);
-}
 
 /** @brief Lấy địa chỉ node tiếp theo trong quá trình định tuyến.
  * @param dst Địa chỉ đích của gói tin.
@@ -278,13 +244,11 @@ bool all_fragments_received(const RxMessageBuffer &buffer) {
 }
 
 /**
- * @brief Chuẩn bị gói tin trước khi gửi bằng cách tính toán và điền giá trị CRC.
+ * @brief Truyền gói tin.
  * @param packet Gói tin cần chuẩn bị.
- * @note Hàm này sẽ đặt trường CRC của gói tin dựa trên nội dung của các trường khác. 
- * Việc này đảm bảo rằng người nhận có thể kiểm tra tính toàn vẹn của gói tin bằng cách so sánh CRC nhận được với CRC tính toán lại từ dữ liệu.
+ * @note Hàm này sẽ đẩy gói tin xuống phần cứng LoRa.
  */
 bool send_raw_packet(LoRaPacket &packet) {
-    packet.crc = packet_crc(packet);
     LoRa.idle(); // Đảm bảo radio ở trạng thái idle trước khi gửi
     LoRa.beginPacket();
     LoRa.write(reinterpret_cast<const uint8_t*>(&packet), sizeof(packet));
@@ -319,8 +283,8 @@ bool read_packet(LoRaPacket &packet) {
 
   size_t bytesRead = LoRa.readBytes(reinterpret_cast<uint8_t *>(&packet), sizeof(packet));
   
-  //so sánh số byte đọc được với kích thước của cấu trúc packet, đồng thời kiểm tra tính hợp lệ của gói tin qua CRC và các trường khác
-  return bytesRead == sizeof(packet) && validate_packet(packet); //so sánh 
+  //so sánh số byte đọc được với kích thước của cấu trúc packet, đồng thời kiểm tra tính hợp lệ của gói tin
+  return bytesRead == sizeof(packet) && validate_packet(packet); 
 }
 
 /**
@@ -543,6 +507,11 @@ void handle_final_fragment(const LoRaPacket &packet) {
 
   buf->lastUpdate = millis();
 
+  if (packet.fragIndex >= buf->fragCount || packet.fragIndex >= LORA_MAX_FRAGMENTS) {
+    Serial.println("Drop fragment: Invalid fragIndex");
+    return;
+  }
+
   uint16_t offset = static_cast<uint16_t>(packet.fragIndex) * LORA_PAYLOAD_MAX;
   if (offset + packet.payloadLen > LORA_ENCODED_MAX) {
     Serial.println("Drop fragment: reassembly buffer overflow");
@@ -555,7 +524,7 @@ void handle_final_fragment(const LoRaPacket &packet) {
   Serial.print("RX frag ");
   Serial.print(packet.fragIndex + 1);
   Serial.print("/");
-  Serial.print(packet.fragCount);
+  Serial.print(buf->fragCount);
   Serial.print(" msgId=");
   Serial.println(packet.msgId);
 
@@ -586,7 +555,8 @@ void relay_packet(LoRaPacket &packet) {
   packet.prevHop = NODE_ID;
   packet.nextHop = BROADCAST_ID; // Flooding
   packet.flags |= LORA_FLAG_RELAYED; // Đánh dấu đã được relay
-  send_with_retry(packet);
+  packet.flags &= ~LORA_FLAG_ACK_REQ; // Tắt ACK ở tầng Relay (Fire-and-forget). Độ tin cậy do End-to-End ACK đảm nhận.
+  send_with_retry(packet); // Sẽ chỉ gửi 1 lần duy nhất vì ACK_REQ đã tắt
 }
 
 /**
@@ -632,14 +602,29 @@ void process_incoming_packet(LoRaPacket packet) {
     return;
   }
 
+  // === XỬ LÝ GÓI ACK ===
+  // Gói ACK cần được trung chuyển (Relay) qua nhiều chặng để quay về tay Node gốc.
+  // Nếu ACK dành cho mình thì bỏ qua (hàm wait_for_ack đã chịu trách nhiệm bắt nó).
+  // Nếu ACK dành cho người khác thì chuyển tiếp giúp.
   if (packet.type == LORA_PACKET_ACK) {
+    if (packet.dst == NODE_ID) {
+      return; // ACK dành cho mình, wait_for_ack() sẽ xử lý
+    }
+    // ACK dành cho node khác -> Chuyển tiếp (Multi-hop ACK)
+    bool duplicate = was_seen(packet.src, packet.seq);
+    if (!duplicate) {
+      mark_seen(packet.src, packet.seq);
+      relay_packet(packet);
+    }
     return;
   }
 
   print_link_metric();
-  
-  // Chỉ gửi ACK nếu gói tin yêu cầu
-  if (packet.flags & LORA_FLAG_ACK_REQ) {
+
+  // === CHỈ NODE ĐÍCH THỰC SỰ MỚI ĐƯỢC GỬI ACK ===
+  // Trạm trung gian (Relay) KHÔNG được phép gửi ACK,
+  // vì sẽ gây rác sóng và đánh lừa Node gốc.
+  if ((packet.flags & LORA_FLAG_ACK_REQ) && packet.dst == NODE_ID) {
     send_ack(packet);
   }
 

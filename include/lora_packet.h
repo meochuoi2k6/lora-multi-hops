@@ -78,11 +78,11 @@ constexpr uint8_t LORA_MAX_RETRY = 3;
 /**
  * @brief Thời gian chờ xác nhận (ACK Timeout) tính bằng mili-giây.
  * @note Ở cấu hình SF7, BW 125kHz, thời gian truyền một gói LoRa max payload 
- * tốn khoảng 100-150ms. Cộng thêm thời gian xử lý, độ trễ ngẫu nhiên (Jitter) khi 
- * node trung gian relay, thì RTT (Round Trip Time - thời gian khứ hồi) tối đa 
- * an toàn là khoảng 1.2 giây. Quá 1.2s mà chưa có ACK thì coi như gói đã bị Rớt (Packet Loss).
+ * tốn khoảng 100-150ms. Với mạng Multi-hop, gói ACK phải nhảy ngược qua nhiều 
+ * trạm Relay (mỗi trạm delay 150-1000ms), nên RTT tối đa cho 4-5 chặng 
+ * có thể lên đến 4-5 giây. Giá trị 5000ms đảm bảo đủ thời gian cho ACK quay về.
  */
-constexpr unsigned long LORA_ACK_TIMEOUT_MS = 1200;
+constexpr unsigned long LORA_ACK_TIMEOUT_MS = 5000;
 /**
  * @brief Phân loại mục đích của gói tin.
  * @brief - `LORA_PACKET_DATA`: Gói tin mang dữ liệu thực tế (Payload).
@@ -144,7 +144,6 @@ enum LoRaPayloadCodec : uint8_t {
  * @brief - `encodedBitLen`: Chiều dài thực tế sau khi nén (bit)
  * @brief - `payloadLen`: Số byte thực tế chứa trong mảng payload của gói này
  * @brief - `payload[]`: Mảng chứa dữ liệu (tối đa 64 bytes)
- * @brief - `crc`: Mã kiểm tra lỗi CRC16 (Software Error Detection)
  * 
  * @note Mỗi gói tin được đóng gói theo cấu trúc này trước khi gửi qua sóng RF.
  */
@@ -166,7 +165,6 @@ struct LoRaPacket {
   uint16_t encodedBitLen; ///< Chiều dài thực tế sau khi nén (bit)
   uint8_t payloadLen;  ///< Số byte thực tế chứa trong mảng payload của gói này
   uint8_t payload[LORA_PAYLOAD_MAX]; ///< Mảng chứa dữ liệu (tối đa 64 bytes)
-  uint16_t crc;        ///< Mã kiểm tra lỗi CRC16 (Software Error Detection)
 };
 #pragma pack(pop)
 

@@ -41,8 +41,11 @@ void send_buffered_message() {
   int colonIndex = bluetoothBuffer.indexOf(':');
   if (colonIndex > 0) {
     String dstStr = bluetoothBuffer.substring(0, colonIndex);
-    dst = dstStr.toInt();
-    bluetoothBuffer = bluetoothBuffer.substring(colonIndex + 1);
+    int parsedDst = dstStr.toInt();
+    if (parsedDst > 0 && parsedDst < BROADCAST_ID) {
+      dst = static_cast<uint8_t>(parsedDst);
+      bluetoothBuffer = bluetoothBuffer.substring(colonIndex + 1);
+    }
   }
 
   Serial.print("BT input to ");
@@ -109,7 +112,7 @@ void bluetooth_input_process() {
         continue;
       } else if (bluetoothBuffer.endsWith("[END]")) {
         btFramingMode = false;
-        bluetoothBuffer.replace("[END]", "");
+        bluetoothBuffer = bluetoothBuffer.substring(0, bluetoothBuffer.length() - 5);
         send_buffered_message();
         continue;
       }
