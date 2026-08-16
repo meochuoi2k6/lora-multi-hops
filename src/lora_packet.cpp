@@ -769,7 +769,8 @@ bool lora_send_text_internal(uint8_t dst, const char *text) {
   float entropy = huffman_entropy(raw, rawLen);
 
   bool compressed = huffman_compress(raw, rawLen, encoded, LORA_ENCODED_MAX, encodedBits, encodedBytes);
-  if (compressed && encodedBytes < rawLen) {
+  int compress_ratio = static_cast<int>(static_cast<float>(encodedBytes) / static_cast<float>(rawLen));
+  if (compressed && compress_ratio <= 0.8) {
     codec = LORA_CODEC_STATIC_HUFFMAN;
   } else {
     memcpy(encoded, raw, rawLen);
